@@ -1,0 +1,25 @@
+description: |
+  GitHub Actions offers managed virtual environments for running workflows. 
+  In order for act to run your workflows locally, it must run a container for the runner defined in your workflow file.
+  The default images do not contain all the tools that GitHub Actions offers by default in their runners due to size constraints. 
+  You can override the default container by specifying a different image in the `platform` parameter.
+
+  Please see Act's documentation for more details on available images: https://nektosact.com/usage/runners.html#default-runners-are-intentionally-incomplete
+
+usage:
+  version: 2.1
+  orbs:
+    act: circleci/act@x.y.z
+  workflows:
+    main:
+      jobs:
+        - act/act:
+            uses: aquasecurity/trivy-action@master
+            with: |
+              scan-type: fs
+              ignore-unfixed: true
+              format: sarif
+              output: report.sarif
+              scanners: vuln,secret,misconfig,license
+            platform: ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest
+            context: act

@@ -1,0 +1,20 @@
+description: |
+  An example of overriding the machine executor for a job. This can be useful if you need to run action on a specific machine type.
+
+usage:
+  version: 2.1
+  orbs:
+    act: circleci/act@x.y.z
+  workflows:
+    main:
+      jobs:
+        - act/act:
+            uses: actions/hello-world-javascript-action@v1.1
+            with: |
+              who-to-greet: "Mona the Octocat"
+            env: |
+              hello: world
+            executor:
+              image: android:2024.11.1
+              resource_class: medium 
+              docker_layer_caching: true

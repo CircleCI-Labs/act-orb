@@ -2,7 +2,7 @@ version: 2.1
 orbs:
   # Your orb will be automatically injected here during the pipeline.
   # Reference your orb's jobs and commands below as they will exist when built.
-  orb-tools: circleci/orb-tools@12.0
+  orb-tools: crowley/orb-tools@dev:alpha
   # The orb definition is intentionally not included here. It will be injected into the pipeline.
   act: {}
 
@@ -27,8 +27,13 @@ jobs:
       - image: cimg/base:current
     steps:
       - checkout
-      # Run your orb's commands to validate them.
-      - act/greet
+      - act/act:
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          env: |
+            hello-world: "example-value"
+
 workflows:
   test-deploy:
     jobs:
@@ -49,3 +54,4 @@ workflows:
             - command-test
           context: orb-publishing
           filters: *release-filters
+          release_environment: Orbs

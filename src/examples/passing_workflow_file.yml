@@ -1,0 +1,13 @@
+description: |
+  Skip workflow file generation and pass a pre-existing GitHub Action workflow file to the Act job.
+
+usage:
+  version: 2.1
+  orbs:
+    act: circleci/act@x.y.z
+  workflows:
+    main:
+      jobs:
+        - act/act:
+            workflow-file: .github/workflows/workflow.yml
+            skip-create-workflow-file: true

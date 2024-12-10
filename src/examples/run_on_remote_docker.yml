@@ -1,0 +1,24 @@
+description: |
+  Run a GitHub Action using the `act` orb on a remote Docker container. The default executor is `machine` but Act will work
+  with the `docker` executor if you enable remote docker.
+
+usage:
+  version: 2.1
+  orbs:
+    act: circleci/act@x.y.z
+  jobs:
+    run_on_remote_docker:
+      docker:
+        - image: cimg/base:current
+      steps:
+        - setup_remote_docker
+        - act/act:
+            uses: actions/hello-world-javascript-action@v1.1
+            with: |
+              who-to-greet: "Mona the Octocat"
+            env: |
+              hello-world: "example-value"
+  workflows:
+    main:
+      jobs:
+        - run_on_remote_docker

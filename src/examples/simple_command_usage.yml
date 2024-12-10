@@ -1,0 +1,24 @@
+description: |
+  Run a GitHub Action using the `act` orb. This example utilizes the command built into the orb, which requires the users to specify the execution environment.
+  This will run the `actions/hello-world-javascript-action` action with the specified `with` inputs and `env` variables.
+
+usage:
+  version: 2.1
+  orbs:
+    act: circleci/act@x.y.z
+  jobs:
+    simple_command_usage:
+      machine:
+        - image: ubuntu-2404:current
+      resource_class: arm.large
+      steps:
+        - act/act:
+            uses: actions/hello-world-javascript-action@v1.1
+            with: |
+              who-to-greet: "Mona the Octocat"
+            env: |
+              hello-world: "example-value"
+  workflows:
+    main:
+      jobs:
+        - simple_command_usage

@@ -1,0 +1,48 @@
+description: Generate a GitHub Actions-like workflow YAML file
+
+parameters:
+  workflow-file:
+    type: string
+    default: /tmp/workflow.yml
+    description: Path to store the generated GitHub Actions-like workflow YAML file
+  action:
+    type: string
+    description: The GitHub Action to execute (e.g. actions/checkout@v2)
+  with:
+    default: ""
+    type: string
+    description: Key-value pairs for the `with` block
+  env:
+    type: string
+    default: ""
+    description: Key-value pairs for the `env` block
+  workflow-name:
+    type: string
+    default: "circleci"
+    description: Name of the workflow
+  workflow-event:
+    type: string
+    default: "push"
+    description: Event that triggers the workflow (e.g. push, pull_request)
+  job-name:
+    type: string
+    default: "action"
+    description: Name of the job
+  runs-on-image:
+    type: string
+    default: "ubuntu-latest"
+    description: Image to run the job on (e.g. ubuntu-latest, windows-latest)
+
+steps:
+  - run:
+      name: Generate Workflow YAML
+      environment:
+        ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
+        ORB_VAL_ACTION: <<parameters.action>>
+        ORB_VAL_WITH: <<parameters.with>>
+        ORB_VAL_ENV: <<parameters.env>>
+        ORB_VAL_WORKFLOW_NAME: <<parameters.workflow-name>>
+        ORB_VAL_WORKFLOW_EVENT: <<parameters.workflow-event>>
+        ORB_VAL_JOB_NAME: <<parameters.job-name>>
+        ORB_VAL_RUNS_ON_IMAGE: <<parameters.runs-on-image>
+      command: <<include(scripts/create-workflow-file.sh)>>

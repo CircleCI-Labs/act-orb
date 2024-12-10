@@ -1,0 +1,24 @@
+description: Install Act for running GitHub Actions locally
+
+parameters:
+  version:
+    type: string
+    default: "latest"
+    description: The version of Act to install
+  debug:
+    type: boolean
+    default: false
+    description: Enable debug logging for installing Act
+  bin-dir:
+    type: string
+    default: "/home/circleci/bin"
+    description: The directory where Act should be installed
+
+steps:
+  - run:
+      name: "Installing Act << parameters.version >>"
+      environment:
+        ORB_VAL_VERSION: <<parameters.version>>
+        ORB_VAL_DEBUG: <<parameters.debug>>
+        ORB_VAL_BIN_DIR: <<parameters.bin-dir>
+      command: <<include(scripts/install.sh)>>

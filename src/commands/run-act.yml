@@ -1,0 +1,130 @@
+description: Run a workflow YAML file using Act
+
+parameters:
+  workflow-file:
+    type: string
+    default: /tmp/workflow.yml
+    description: Path to the workflow file to execute
+  platform:
+    type: string
+    default: ubuntu-latest=node:16-buster-slim
+    description: Custom image to use per platform
+  env-file:
+    type: string
+    default: /tmp/act.env
+    description: Path to the environment variables file
+  secret-file:
+    type: string
+    default: /tmp/act.secrets
+    description: Path to the secret variables file
+  event-file:
+    type: string
+    default: /tmp/act.event
+    description: Path to the event JSON file
+  actor:
+    type: string
+    default: nektos/act
+    description: User that triggered the event
+  bind:
+    type: boolean
+    default: true
+    description: Enables the bind flag which binds working directory to container, rather than copy
+  verbose:
+    type: boolean
+    default: false
+    description: Enables detailed output logs
+  detect-event:
+    type: boolean
+    default: true
+    description: Automatically detects and uses the first event type in the workflow
+  directory:
+    type: string
+    default: .
+    description: Working directory for the workflow
+  action-offline-mode:
+    type: boolean
+    default: false
+    description: Enable offline mode for actions (runs without fetching actions from remote sources)
+  cache-actions:
+    type: boolean
+    default: true
+    description:  Enables caching of actions using CircleCI caching
+  defaultbranch:
+    type: string
+    default: main
+    description: Specifies the default branch to use
+  job:
+    type: string
+    default: ""
+    description: Specifies a specific job ID to run
+  pull:
+    type: boolean
+    default: true
+    description: Forces pulling of Docker images even if already present
+  rebuild:
+    type: boolean
+    default: true
+    description: Rebuilds local Docker images even if already present
+  remote-name:
+    type: string
+    default: origin
+    description: Specifies the Git remote name for retrieving the repo URL
+  reuse:
+    type: boolean
+    default: false
+    description: Prevents container removal after successful runs for maintaining state
+  input-file:
+    type: string
+    default: .input
+    description: Path to the file containing action inputs
+  var-file:
+    type: string
+    default: .vars
+    description: Path to the file containing variable definitions
+  additional-act-flags:
+    type: string
+    default: ""
+    description: Additional flags to be passed to the `act` CLI
+
+steps:
+  - when:
+      condition: << parameters.cache-actions >>
+      steps:
+        - restore_cache:
+            name: Restoring cache for Act...
+            keys:
+              - act-cache-{{ checksum "<< parameters.workflow-file >>" }}
+              - act-cache
+  - run:
+      name: Run Act
+      environment:
+        ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
+        ORB_VAL_PLATFORM: <<parameters.platform>>
+        ORB_VAL_ENV_FILE: <<parameters.env-file>>
+        ORB_VAL_SECRET_FILE: <<parameters.secret-file>>
+        ORB_VAL_EVENT_FILE: <<parameters.event-file>>
+        ORB_VAL_ACTOR: <<parameters.actor>>
+        ORB_VAL_BIND: <<parameters.bind>>
+        ORB_VAL_VERBOSE: <<parameters.verbose>>
+        ORB_VAL_DETECT_EVENT: <<parameters.detect-event>>
+        ORB_VAL_DIRECTORY: <<parameters.directory>>
+        ORB_VAL_ACTION_OFFLINE_MODE: <<parameters.action-offline-mode>>
+        ORB_VAL_CACHE_ACTIONS: <<parameters.cache-actions>>
+        ORB_VAL_DEFAULT_BRANCH: <<parameters.defaultbranch>>
+        ORB_VAL_JOB: <<parameters.job>>
+        ORB_VAL_PULL: <<parameters.pull>>
+        ORB_VAL_REBUILD: <<parameters.rebuild>>
+        ORB_VAL_REMOTE_NAME: <<parameters.remote-name>>
+        ORB_VAL_REUSE: <<parameters.reuse>>
+        ORB_VAL_INPUT_FILE: <<parameters.input-file>>
+        ORB_VAL_VAR_FILE: <<parameters.var-file>>
+        ORB_VAL_ADDITIONAL_ACT_FLAGS: <<parameters.additional-act-flags>>
+      command: <<include(scripts/run-act.sh)>>
+  - when:
+      condition: << parameters.cache-actions >>
+      steps:
+        - save_cache:
+            name: Saving cache for Act...
+            key: act-cache-{{ checksum "<< parameters.workflow-file >>" }}
+            paths:
+              - ~/.cache/act

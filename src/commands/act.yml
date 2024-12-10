@@ -1,0 +1,204 @@
+description: Handles setting up the needed environment and running Act
+
+parameters:
+  checkout:
+    type: boolean
+    default: true
+    description: Checkout the CircleCI repository before running Act
+  version:
+    type: string
+    default: "latest"
+    description: The version of Act to install
+  debug:
+    type: boolean
+    default: false
+    description: Enable debug logging for installing Act
+  bin-dir:
+    type: string
+    default: "/home/circleci/bin"
+    description: The directory where Act should be installed
+  env-file:
+    type: string
+    default: /tmp/act.env
+    description: Path to store or fetch the environment variables file
+  secret-file:
+    type: string
+    default: /tmp/act.secrets
+    description: Path to store or fetch the secret variables file
+  secrets:
+    type: string
+    default: GITHUB_TOKEN
+    description: A comma-separated list of environment variables treated as secrets
+  workflow-file:
+    type: string
+    default: /tmp/workflow.yml
+    description: Path to store or fetch the workflow file to execute
+  uses:
+    type: string
+    default: ""
+    description: The GitHub Action to execute (e.g. actions/checkout@v2)
+  with:
+    default: ""
+    type: string
+    description: Key-value pairs for the `with` block
+  env:
+    type: string
+    default: ""
+    description: Key-value pairs for the `env` block
+  workflow-name:
+    type: string
+    default: "circleci"
+    description: Name of the workflow
+  workflow-event:
+    type: string
+    default: "push"
+    description: Event that triggers the workflow (e.g. push, pull_request)
+  job-name:
+    type: string
+    default: "action"
+    description: Name of the job
+  runs-on-image:
+    type: string
+    default: "ubuntu-latest"
+    description: Image to run the job on (e.g. ubuntu-latest, windows-latest)
+  platform:
+    type: string
+    default: ubuntu-latest=node:16-buster-slim
+    description: Custom image to use per platform
+  event-file:
+    type: string
+    default: /tmp/act.event
+    description: Path to the event JSON file
+  actor:
+    type: string
+    default: nektos/act
+    description: User that triggered the event
+  bind:
+    type: boolean
+    default: true
+    description: Enables the bind flag which binds working directory to container, rather than copy
+  verbose:
+    type: boolean
+    default: false
+    description: Enables detailed output logs
+  detect-event:
+    type: boolean
+    default: true
+    description: Automatically detects and uses the first event type in the workflow
+  directory:
+    type: string
+    default: .
+    description: Working directory for the workflow
+  action-offline-mode:
+    type: boolean
+    default: false
+    description: Enable offline mode for actions (runs without fetching actions from remote sources)
+  cache-actions:
+    type: boolean
+    default: true
+    description:  Enables caching of GitHub Actions using CircleCI caching
+  defaultbranch:
+    type: string
+    default: main
+    description: Specifies the default branch to use
+  job:
+    type: string
+    default: ""
+    description: Specifies a specific job ID to run
+  pull:
+    type: boolean
+    default: false
+    description: Forces pulling of Docker images even if already present
+  rebuild:
+    type: boolean
+    default: false
+    description: Rebuilds local Docker images even if already present
+  remote-name:
+    type: string
+    default: origin
+    description: Specifies the Git remote name for retrieving the repo URL
+  reuse:
+    type: boolean
+    default: false
+    description: Prevents container removal after successful runs for maintaining state
+  input-file:
+    type: string
+    default: .input
+    description: Path to the file containing action inputs
+  var-file:
+    type: string
+    default: .vars
+    description: Path to the file containing variable definitions
+  additional-act-flags:
+    type: string
+    default: ""
+    description: Additional flags to be passed to the `act` CLI
+  skip-install:
+    type: boolean
+    default: false
+    description: Skips installing Act
+  skip-create-env-and-secret-file:
+    type: boolean
+    default: false
+    description: Skips generating env and secret files
+  skip-create-workflow-file:
+    type: boolean
+    default: false
+    description: Skips creating the workflow file
+
+steps:
+  - when:
+      condition: << parameters.checkout >>
+      steps:
+        - checkout
+  - when:
+      condition: 
+        not: << parameters.skip-install >>
+      steps:
+        - install:
+            version: << parameters.version >>
+            debug: << parameters.debug >>
+            bin-dir: << parameters.bin-dir >>
+  - when:
+      condition: 
+        not: << parameters.skip-create-env-and-secret-file >>
+      steps:
+        - create-env-and-secret-file:
+            env-file: << parameters.env-file >>
+            secret-file: << parameters.secret-file >>
+            secrets: << parameters.secrets >>
+  - when:
+      condition: 
+        not: << parameters.skip-create-workflow-file >>
+      steps:
+        - create-workflow-file:
+            workflow-file: << parameters.workflow-file >>
+            action: << parameters.uses >>
+            with: << parameters.with >>
+            env: << parameters.env >>
+            workflow-name: << parameters.workflow-name >>
+            workflow-event: << parameters.workflow-event >>
+            job-name: << parameters.job-name >>
+            runs-on-image: << parameters.runs-on-image >>
+  - run-act:
+      workflow-file: << parameters.workflow-file >>
+      platform: << parameters.platform >>
+      env-file: << parameters.env-file >>
+      secret-file: << parameters.secret-file >>
+      event-file: << parameters.event-file >>
+      actor: << parameters.actor >>
+      bind: << parameters.bind >>
+      verbose: << parameters.verbose >>
+      detect-event: << parameters.detect-event >>
+      directory: << parameters.directory >>
+      action-offline-mode: << parameters.action-offline-mode >>
+      cache-actions: << parameters.cache-actions >>
+      defaultbranch: << parameters.defaultbranch >>
+      job: << parameters.job >>
+      pull: << parameters.pull >>
+      rebuild: << parameters.rebuild >>
+      remote-name: << parameters.remote-name >>
+      reuse: << parameters.reuse >>
+      input-file: << parameters.input-file >>
+      var-file: << parameters.var-file >>
+      additional-act-flags: << parameters.additional-act-flags >>
