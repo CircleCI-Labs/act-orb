@@ -20,6 +20,7 @@ workflows:
           exclude: "RC010"
       - shellcheck/check:
           filters: *filters
+          severity: error
       # Triggers the next workflow in the Orb Development Kit.
       - orb-tools/continue:
           pipeline_number: << pipeline.number >>
