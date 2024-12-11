@@ -48,6 +48,6 @@ $(if [ -n "$formatted_env" ]; then echo "        env:"; echo "$formatted_env"; f
 EOF
 
 # Echo the workflow file for debugging
-echo "Generated workflow: $(cat "${ORB_VAL_WORKFLOW_FILE}")"
+echo -e "Generated workflow:\n$(cat "${ORB_VAL_WORKFLOW_FILE}")"
 
 echo "Generated workflow YAML file at ${ORB_VAL_WORKFLOW_FILE}"
