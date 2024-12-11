@@ -22,24 +22,42 @@ release-filters: &release-filters
 jobs:
   # Create jobs to test the commands of your orbs.
   # You may want to add additional validation steps to ensure the commands are working as expected.
-  command-test:
+  run_on_remote_docker:
     docker:
       - image: cimg/base:current
     steps:
-      - checkout
+      - setup_remote_docker
       - act/act:
           uses: actions/hello-world-javascript-action@v1.1
           with: |
             who-to-greet: "Mona the Octocat"
           env: |
             hello-world: "example-value"
-
+  
 workflows:
   test-deploy:
     jobs:
       # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
       # Test your orb's commands in a custom job and test your orb's jobs directly as a part of this workflow.
-      - command-test:
+      - run_on_remote_docker:
+          name: Testing Remote Docker
+          filters: *filters
+      - act/act:
+          name: Testing Overriding Executor
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          env: |
+            hello: world
+          executor:
+            image: android:2024.11.1
+            resource_class: medium 
+            docker_layer_caching: true
+          filters: *filters
+      - act/act:
+          name: Testing Running Workflow File
+          workflow-file: .github/workflows/hello-world.yml
+          skip-create-workflow-file: true
           filters: *filters
       # The orb must be re-packed for publishing, and saved to the workspace.
       - orb-tools/pack:
@@ -51,7 +69,9 @@ workflows:
           # Ensure this job requires all test jobs and the pack job.
           requires:
             - orb-tools/pack
-            - command-test
+            - "Testing Remote Docker"
+            - "Testing Overriding Executor"
+            - "Testing Running Workflow File"
           context: orb-publishing
           filters: *release-filters
           release_environment: Orbs
