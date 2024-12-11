@@ -20,14 +20,16 @@ EOF
 
 # Format 'with' parameter
 if [ -n "$WITH_STRING" ]; then
-    formatted_with="${WITH_STRING//^/          }"
+    # shellcheck disable=SC2001
+    formatted_with="$(echo "$WITH_STRING" | sed 's/^/          /')"
 else
     formatted_with=""
 fi
 
 # Format 'env' parameter
 if [ -n "$ENV_STRING" ]; then
-    formatted_env="${ENV_STRING//^/          }"
+    # shellcheck disable=SC2001
+    formatted_env="$(echo "$ENV_STRING" | sed 's/^/          /')"
 else
     formatted_env=""
 fi
