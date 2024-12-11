@@ -50,4 +50,4 @@ EOF
 # Echo the workflow file for debugging
 echo -e "Generated workflow:\n$(cat "${ORB_VAL_WORKFLOW_FILE}")"
 
-echo "Generated workflow YAML file at ${ORB_VAL_WORKFLOW_FILE}"
+echo -e "\nGenerated workflow YAML file at ${ORB_VAL_WORKFLOW_FILE}"
