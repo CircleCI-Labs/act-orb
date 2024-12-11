@@ -50,6 +50,7 @@ workflows:
           env: |
             hello: world
           executor:
+            name: act/default
             image: android:2024.11.1
             resource_class: medium 
             docker_layer_caching: true
