@@ -20,5 +20,5 @@ steps:
       environment:
         ORB_VAL_VERSION: <<parameters.version>>
         ORB_VAL_DEBUG: <<parameters.debug>>
-        ORB_VAL_BIN_DIR: <<parameters.bin-dir>
+        ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
       command: <<include(scripts/install.sh)>>

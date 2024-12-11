@@ -48,7 +48,7 @@ parameters:
   cache-actions:
     type: boolean
     default: true
-    description:  Enables caching of actions using CircleCI caching
+    description: Enables caching of actions using CircleCI caching
   defaultbranch:
     type: string
     default: main

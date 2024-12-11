@@ -9,7 +9,7 @@ usage:
   jobs:
     simple_command_usage:
       machine:
-        - image: ubuntu-2404:current
+        image: ubuntu-2404:current
       resource_class: arm.large
       steps:
         - act/act:

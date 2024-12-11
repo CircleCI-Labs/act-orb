@@ -1,7 +1,7 @@
 description: |
-  GitHub Actions offers managed virtual environments for running workflows. 
+  GitHub Actions offers managed virtual environments for running workflows.
   In order for act to run your workflows locally, it must run a container for the runner defined in your workflow file.
-  The default images do not contain all the tools that GitHub Actions offers by default in their runners due to size constraints. 
+  The default images do not contain all the tools that GitHub Actions offers by default in their runners due to size constraints.
   You can override the default container by specifying a different image in the `platform` parameter.
 
   Please see Act's documentation for more details on available images: https://nektosact.com/usage/runners.html#default-runners-are-intentionally-incomplete

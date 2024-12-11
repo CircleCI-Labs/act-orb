@@ -96,7 +96,7 @@ parameters:
   cache-actions:
     type: boolean
     default: true
-    description:  Enables caching of GitHub Actions using CircleCI caching
+    description: Enables caching of GitHub Actions using CircleCI caching
   defaultbranch:
     type: string
     default: main

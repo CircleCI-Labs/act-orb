@@ -1,6 +1,6 @@
 description: |
-  GitHub automatically provides a GITHUB_TOKEN secret when running workflows inside GitHub. 
-  If your workflow fails with an error about token, it most likely requires GITHUB_TOKEN to be set up. 
+  GitHub automatically provides a GITHUB_TOKEN secret when running workflows inside GitHub.
+  If your workflow fails with an error about token, it most likely requires GITHUB_TOKEN to be set up.
   If your workflow depends on this token, you need to create a personal access token and pass it to the Act job.
   Please utilizes CircleCI's built in secret management and set GITHUB_TOKEN as environment variable. In this example
   CircleCI's contexts are used to inject the GITHUB_TOKEN secret into the Act job.

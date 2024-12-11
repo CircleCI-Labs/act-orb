@@ -96,7 +96,7 @@ parameters:
   cache-actions:
     type: boolean
     default: true
-    description:  Enables caching of GitHub Actions using CircleCI caching
+    description: Enables caching of GitHub Actions using CircleCI caching
   defaultbranch:
     type: string
     default: main
@@ -152,7 +152,7 @@ steps:
       steps:
         - checkout
   - when:
-      condition: 
+      condition:
         not: << parameters.skip-install >>
       steps:
         - install:
@@ -160,7 +160,7 @@ steps:
             debug: << parameters.debug >>
             bin-dir: << parameters.bin-dir >>
   - when:
-      condition: 
+      condition:
         not: << parameters.skip-create-env-and-secret-file >>
       steps:
         - create-env-and-secret-file:
@@ -168,7 +168,7 @@ steps:
             secret-file: << parameters.secret-file >>
             secrets: << parameters.secrets >>
   - when:
-      condition: 
+      condition:
         not: << parameters.skip-create-workflow-file >>
       steps:
         - create-workflow-file:

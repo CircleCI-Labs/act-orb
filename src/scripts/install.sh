@@ -10,9 +10,9 @@ if [[ "${ORB_VAL_BIN_DIR}" != "./bin" ]]; then
 fi
 
 # Enable debug logging if the debug parameter is true
-if [[ "${ORB_VAL_DEBUG}g >>" == "true" ]]; then
+if [[ "${ORB_VAL_DEBUG}" == "true" ]]; then
     DEBUG_FLAG="-d"
 fi
 
 # Install Act with the specified version, bin-dir, and debug options
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash -s -- $BIN_DIR_FLAG $DEBUG_FLAG ${ORB_VAL_VERSION}
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash -s -- "${BIN_DIR_FLAG}" "${DEBUG_FLAG}" "${ORB_VAL_VERSION}"

@@ -16,5 +16,5 @@ usage:
               hello: world
             executor:
               image: android:2024.11.1
-              resource_class: medium 
+              resource_class: medium
               docker_layer_caching: true

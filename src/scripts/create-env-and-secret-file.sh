@@ -6,7 +6,7 @@ IFS=$'\n'
 ALL_ENV_VARS=($(env))
 
 # Convert the comma-separated secrets parameter into an array
-IFS=',' read -ra SECRETS \<<< "${ORB_VAL_SECRETS}"
+IFS=',' read -ra SECRETS <<< "${ORB_VAL_SECRETS}"
 
 # Create associative arrays for action and secret variables
 declare -A ACTION_ENV_VARS
@@ -35,11 +35,11 @@ done
 # Write ACTION_ENV_VARS to the .env file
 echo "Writing non-sensitive environment variables to ${ORB_VAL_ENV_FILE}"
 for KEY in "${!ACTION_ENV_VARS[@]}"; do
-    echo "$KEY=${ACTION_ENV_VARS[$KEY]}" >> ${ORB_VAL_ENV_FILE}
+    echo "$KEY=${ACTION_ENV_VARS[$KEY]}" >> "${ORB_VAL_ENV_FILE}"
 done
 
 # Write SECRET_ENV_VARS to the .secrets file
 echo "Writing sensitive environment variables to ${ORB_VAL_SECRET_FILE}"
 for KEY in "${!SECRET_ENV_VARS[@]}"; do
-    echo "$KEY=${SECRET_ENV_VARS[$KEY]}" >> ${ORB_VAL_SECRET_FILE}
+    echo "$KEY=${SECRET_ENV_VARS[$KEY]}" >> "${ORB_VAL_SECRET_FILE}"
 done
