@@ -76,3 +76,4 @@ workflows:
           context: orb-publishing
           filters: *release-filters
           release_environment: Orbs
+          github_token: GHI_TOKEN
