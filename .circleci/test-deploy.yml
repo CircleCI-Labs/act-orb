@@ -2,7 +2,7 @@ version: 2.1
 orbs:
   # Your orb will be automatically injected here during the pipeline.
   # Reference your orb's jobs and commands below as they will exist when built.
-  orb-tools: crowley/orb-tools@dev:alpha
+  orb-tools: crowley/orb-tools@dev:ef18d008f71b11817d13bde9d2678bdd0c50b88d
   # The orb definition is intentionally not included here. It will be injected into the pipeline.
   act: {}
 
