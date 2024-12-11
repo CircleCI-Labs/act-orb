@@ -34,13 +34,13 @@ fi
 
 # Generate the workflow YAML file
 cat <<EOF > "${ORB_VAL_WORKFLOW_FILE}"
-name: "${ORB_VAL_WORKFLOW_NAME}"
-on: "${ORB_VAL_WORKFLOW_EVENT}"
+name: ${ORB_VAL_WORKFLOW_NAME}
+on: ${ORB_VAL_WORKFLOW_EVENT}
 jobs:
-    "${ORB_VAL_JOB_NAME}":
-    runs-on: "${ORB_VAL_RUNS_ON_IMAGE}"
+  ${ORB_VAL_JOB_NAME}:
+    runs-on: ${ORB_VAL_RUNS_ON_IMAGE}
     steps:
-        - uses: "${ORB_VAL_ACTION}"
+      - uses: ${ORB_VAL_ACTION}
 $(if [ -n "$formatted_with" ]; then echo "        with:"; echo "$formatted_with"; fi)
 $(if [ -n "$formatted_env" ]; then echo "        env:"; echo "$formatted_env"; fi)
 EOF
