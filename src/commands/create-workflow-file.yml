@@ -44,5 +44,5 @@ steps:
         ORB_VAL_WORKFLOW_NAME: <<parameters.workflow-name>>
         ORB_VAL_WORKFLOW_EVENT: <<parameters.workflow-event>>
         ORB_VAL_JOB_NAME: <<parameters.job-name>>
-        ORB_VAL_RUNS_ON_IMAGE: <<parameters.runs-on-image>
+        ORB_VAL_RUNS_ON_IMAGE: <<parameters.runs-on-image>>
       command: <<include(scripts/create-workflow-file.sh)>>

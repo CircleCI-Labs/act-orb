@@ -8,12 +8,12 @@ if [ -z "${ORB_VAL_ACTION}" ]; then
 fi
 
 # Capture 'with' and 'env' inputs directly
-WITH_STRING=$(cat \<<EOF
+WITH_STRING=$(cat <<EOF
 ${ORB_VAL_WITH}
 EOF
 )
 
-ENV_STRING=$(cat \<<EOF
+ENV_STRING=$(cat <<EOF
 ${ORB_VAL_ENV}
 EOF
 )
@@ -33,7 +33,7 @@ else
 fi
 
 # Generate the workflow YAML file
-cat \<<EOF > "${ORB_VAL_WORKFLOW_FILE}"
+cat <<EOF > "${ORB_VAL_WORKFLOW_FILE}"
 name: "${ORB_VAL_WORKFLOW_NAME}"
 on: "${ORB_VAL_WORKFLOW_EVENT}"
 jobs:
