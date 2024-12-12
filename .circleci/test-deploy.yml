@@ -76,7 +76,6 @@ workflows:
           requires:
             - orb-tools/pack
           context: orb-publishing
-          filters: *filters
           release_environment: Orbs
           github_token: GHI_TOKEN
       - orb-tools/publish:
