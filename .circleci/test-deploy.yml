@@ -2,7 +2,7 @@ version: 2.1
 orbs:
   # Your orb will be automatically injected here during the pipeline.
   # Reference your orb's jobs and commands below as they will exist when built.
-  orb-tools: circleci/orb-tools@dev:ef18d008f71b11817d13bde9d2678bdd0c50b88d
+  orb-tools: circleci/orb-tools@dev:61f3da84e6735b06940b195f759db6e7799e8e8c
   # The orb definition is intentionally not included here. It will be injected into the pipeline.
   act: {}
 
@@ -62,17 +62,31 @@ workflows:
           filters: *filters
       # The orb must be re-packed for publishing, and saved to the workspace.
       - orb-tools/pack:
-          filters: *release-filters
+          filters: *filters
+          requires:
+            - "Testing Remote Docker"
+            - "Testing Overriding Executor"
+            - "Testing Running Workflow File"
       - orb-tools/publish:
+          name: "Publish Dev"
+          orb_name: cci-labs/act
+          vcs_type: << pipeline.project.type >>
+          pub_type: dev
+          # Ensure this job requires all test jobs and the pack job.
+          requires:
+            - orb-tools/pack
+          context: orb-publishing
+          filters: *filters
+          release_environment: Orbs
+          github_token: GHI_TOKEN
+      - orb-tools/publish:
+          name: "Publish Production"
           orb_name: cci-labs/act
           vcs_type: << pipeline.project.type >>
           pub_type: production
           # Ensure this job requires all test jobs and the pack job.
           requires:
             - orb-tools/pack
-            - "Testing Remote Docker"
-            - "Testing Overriding Executor"
-            - "Testing Running Workflow File"
           context: orb-publishing
           filters: *release-filters
           release_environment: Orbs
