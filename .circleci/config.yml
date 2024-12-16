@@ -17,7 +17,7 @@ workflows:
           filters: *filters
       - orb-tools/review:
           filters: *filters
-          exclude: "RC010,RC009"
+          exclude: "RC010"
       - shellcheck/check:
           filters: *filters
           severity: error

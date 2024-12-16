@@ -108,10 +108,10 @@ steps:
               - act-cache-images-<< parameters.platform >>
               - act-cache-images
         - run:
-            name: Extract Docker Image for Loading
-            command: |
-              DOCKER_IMAGE=$(echo "<< parameters.platform >>" | cut -d '=' -f2)
-              docker load --input "/tmp/act-images-${DOCKER_IMAGE}.tar"
+            name: Load Act's Images...
+            environment:
+              ORB_VAL_PLATFORM: <<parameters.platform>>
+            command: <<include(scripts/load-docker-image.sh)>>
   - run:
       name: Run Act
       environment:
@@ -149,10 +149,10 @@ steps:
       condition: << parameters.cache-images >>
       steps:
         - run:
-            name: Extract Docker Image for Saving
-            command: |
-              DOCKER_IMAGE=$(echo "<< parameters.platform >>" | cut -d '=' -f2)
-              docker save --output "/tmp/act-images-${DOCKER_IMAGE}.tar" $DOCKER_IMAGE
+            name: Save Act's Images...
+            environment:
+              ORB_VAL_PLATFORM: <<parameters.platform>>
+            command: <<include(scripts/load-docker-image.sh)>>
         - save_cache:
             name: Saving cache for Act's Images...
             key: act-cache-images-<< parameters.platform >>
