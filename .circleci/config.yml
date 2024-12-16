@@ -1,7 +1,7 @@
 version: 2.1
 setup: true
 orbs:
-  orb-tools: circleci/orb-tools@dev:61f3da84e6735b06940b195f759db6e7799e8e8c
+  orb-tools: circleci/orb-tools@12.3.0
   shellcheck: circleci/shellcheck@3.1
 
 filters: &filters

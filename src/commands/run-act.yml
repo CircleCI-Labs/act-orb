@@ -49,6 +49,10 @@ parameters:
     type: boolean
     default: true
     description: Enables caching of actions using CircleCI caching
+  cache-images:
+    type: boolean
+    default: true
+    description: Enables caching of Docker images used by Act using CircleCI caching
   defaultbranch:
     type: string
     default: main
@@ -91,10 +95,23 @@ steps:
       condition: << parameters.cache-actions >>
       steps:
         - restore_cache:
-            name: Restoring cache for Act...
+            name: Restoring cache for Act's Actions...
             keys:
-              - act-cache-{{ checksum "<< parameters.workflow-file >>" }}
-              - act-cache
+              - act-cache-actions-{{ checksum "<< parameters.workflow-file >>" }}
+              - act-cache-actions
+  - when:
+      condition: << parameters.cache-images >>
+      steps:
+        - restore_cache:
+            name: Restoring cache for Act's Images...
+            keys:
+              - act-cache-images-<< parameters.platform >> 
+              - act-cache-images
+        - run:
+            name: Extract Docker Image for Loading
+            command: |
+              DOCKER_IMAGE=$(echo "<< parameters.platform >>" | cut -d '=' -f2)
+              docker load --input "/tmp/act-images-${DOCKER_IMAGE}.tar"
   - run:
       name: Run Act
       environment:
@@ -124,7 +141,20 @@ steps:
       condition: << parameters.cache-actions >>
       steps:
         - save_cache:
-            name: Saving cache for Act...
-            key: act-cache-{{ checksum "<< parameters.workflow-file >>" }}
+            name: Saving cache for Act's Actions...
+            key: act-cache-actions-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
+  - when:
+      condition: << parameters.cache-images >>
+      steps:
+        - run:
+            name: Extract Docker Image for Saving
+            command: |
+              DOCKER_IMAGE=$(echo "<< parameters.platform >>" | cut -d '=' -f2)
+              docker save --output "/tmp/act-images-${DOCKER_IMAGE}.tar" $DOCKER_IMAGE
+        - save_cache:
+            name: Saving cache for Act's Images...
+            key: act-cache-images-<< parameters.platform >>
+            paths:
+              - /tmp/act-images-${DOCKER_IMAGE}.tar

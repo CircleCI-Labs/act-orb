@@ -13,12 +13,32 @@ parameters:
     type: string
     default: "/home/circleci/bin"
     description: The directory where Act should be installed
+  force-install:
+    type: boolean
+    default: false
+    description: Force install Act if already present
 
 steps:
+  - when:
+      condition: << parameters.cache-actions >>
+      steps:
+        - restore_cache:
+            name: Restoring cache for Act CLI...
+            keys:
+              - act-cache-cli
   - run:
       name: "Installing Act << parameters.version >>"
       environment:
         ORB_VAL_VERSION: <<parameters.version>>
         ORB_VAL_DEBUG: <<parameters.debug>>
         ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
+        ORB_VAL_FORCE_INSTALL: <<parameters.force-install>>
       command: <<include(scripts/install.sh)>>
+  - when:
+      condition: << parameters.cache-actions >>
+      steps:
+        - save_cache:
+            name: Saving cache for Act CLI...
+            key: act-cache-cli
+            paths:
+              - << parameters.bin-dir >>/act

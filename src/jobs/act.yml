@@ -17,6 +17,10 @@ parameters:
     type: string
     default: "/home/circleci/bin"
     description: The directory where Act should be installed
+  force-install:
+    type: boolean
+    default: false
+    description: Force install Act if already present
   env-file:
     type: string
     default: /tmp/act.env
@@ -97,6 +101,10 @@ parameters:
     type: boolean
     default: true
     description: Enables caching of GitHub Actions using CircleCI caching
+  cache-images:
+    type: boolean
+    default: true
+    description: Enables caching of Docker images used by Act using CircleCI caching
   defaultbranch:
     type: string
     default: main
@@ -158,6 +166,7 @@ steps:
       debug: << parameters.debug >>
       bin-dir: << parameters.bin-dir >>
       env-file: << parameters.env-file >>
+      force-install: << parameters.force-install >>
       secret-file: << parameters.secret-file >>
       secrets: << parameters.secrets >>
       workflow-file: << parameters.workflow-file >>
@@ -177,6 +186,7 @@ steps:
       directory: << parameters.directory >>
       action-offline-mode: << parameters.action-offline-mode >>
       cache-actions: << parameters.cache-actions >>
+      cache-images: << parameters.cache-images >>
       defaultbranch: << parameters.defaultbranch >>
       job: << parameters.job >>
       pull: << parameters.pull >>

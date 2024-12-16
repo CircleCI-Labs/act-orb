@@ -17,6 +17,10 @@ parameters:
     type: string
     default: "/home/circleci/bin"
     description: The directory where Act should be installed
+  force-install:
+    type: boolean
+    default: false
+    description: Force install Act if already present
   env-file:
     type: string
     default: /tmp/act.env
@@ -159,6 +163,7 @@ steps:
             version: << parameters.version >>
             debug: << parameters.debug >>
             bin-dir: << parameters.bin-dir >>
+            force-install: << parameters.force-install >>
   - when:
       condition:
         not: << parameters.skip-create-env-and-secret-file >>
