@@ -98,7 +98,7 @@ steps:
             name: Restoring cache for Act's Actions...
             keys:
               - act-cache-actions-{{ checksum "<< parameters.workflow-file >>" }}
-              - act-cache-actions
+              - act-cache-actions-
   - when:
       condition: << parameters.cache-images >>
       steps:
@@ -106,7 +106,7 @@ steps:
             name: Restoring cache for Act's Images...
             keys:
               - act-cache-images-<< parameters.platform >>
-              - act-cache-images
+              - act-cache-images-
         - run:
             name: Load Act's Images...
             environment:
@@ -152,7 +152,7 @@ steps:
             name: Save Act's Images...
             environment:
               ORB_VAL_PLATFORM: <<parameters.platform>>
-            command: <<include(scripts/load-docker-image.sh)>>
+            command: <<include(scripts/save-docker-image.sh)>>
         - save_cache:
             name: Saving cache for Act's Images...
             key: act-cache-images-<< parameters.platform >>
