@@ -101,6 +101,10 @@ parameters:
     type: boolean
     default: true
     description: Enables caching of GitHub Actions using CircleCI caching
+  cache-images:
+    type: boolean
+    default: true
+    description: Enables caching of Docker images used by Act using CircleCI caching
   defaultbranch:
     type: string
     default: main
@@ -198,6 +202,7 @@ steps:
       directory: << parameters.directory >>
       action-offline-mode: << parameters.action-offline-mode >>
       cache-actions: << parameters.cache-actions >>
+      cache-images: << parameters.cache-images >>
       defaultbranch: << parameters.defaultbranch >>
       job: << parameters.job >>
       pull: << parameters.pull >>
