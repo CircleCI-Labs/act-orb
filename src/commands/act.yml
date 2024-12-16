@@ -21,6 +21,10 @@ parameters:
     type: boolean
     default: false
     description: Force install Act if already present
+  cache-cli:
+    type: boolean
+    default: true
+    description: Enables caching of Act CLI using CircleCI caching
   env-file:
     type: string
     default: /tmp/act.env
@@ -168,6 +172,7 @@ steps:
             debug: << parameters.debug >>
             bin-dir: << parameters.bin-dir >>
             force-install: << parameters.force-install >>
+            cache-cli: << parameters.cache-cli >>
   - when:
       condition:
         not: << parameters.skip-create-env-and-secret-file >>
