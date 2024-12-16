@@ -97,16 +97,16 @@ steps:
         - restore_cache:
             name: Restoring cache for Act's Actions...
             keys:
-              - act-cache-actions-{{ checksum "<< parameters.workflow-file >>" }}
-              - act-cache-actions-
+              - act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+              - act-cache-actions-{{ arch }}-
   - when:
       condition: << parameters.cache-images >>
       steps:
         - restore_cache:
             name: Restoring cache for Act's Images...
             keys:
-              - act-cache-images-<< parameters.platform >>
-              - act-cache-images-
+              - act-cache-images-{{ arch }}-<< parameters.platform >>
+              - act-cache-images-{{ arch }}-
         - run:
             name: Load Act's Images...
             environment:
@@ -142,7 +142,7 @@ steps:
       steps:
         - save_cache:
             name: Saving cache for Act's Actions...
-            key: act-cache-actions-{{ checksum "<< parameters.workflow-file >>" }}
+            key: act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
   - when:
@@ -155,6 +155,6 @@ steps:
             command: <<include(scripts/save-docker-image.sh)>>
         - save_cache:
             name: Saving cache for Act's Images...
-            key: act-cache-images-<< parameters.platform >>
+            key: act-cache-images-{{ arch }}-<< parameters.platform >>
             paths:
               - /tmp/act-images-${DOCKER_IMAGE}.tar
