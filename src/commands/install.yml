@@ -41,8 +41,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act CLI...
             keys:
-              - v3-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
-              - v3-act-cache-cli-{{ arch }}-
+              - v4-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
+              - v4-act-cache-cli-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -63,6 +63,6 @@ steps:
       steps:
         - save_cache:
             name: Saving cache for Act CLI...
-            key: v3-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
+            key: v4-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
             paths:
               - << parameters.bin-dir >>/act

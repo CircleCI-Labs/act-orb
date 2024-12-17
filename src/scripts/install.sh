@@ -15,12 +15,12 @@ if [[ -n "${ORB_VAL_BIN_DIR}" && "${ORB_VAL_BIN_DIR}" != "./bin" ]]; then
 fi
 
 # Enable debug logging if the debug parameter is true
-if [[ "${ORB_VAL_DEBUG}" == "true" ]]; then
+if [[ "${ORB_VAL_DEBUG}" == "1" ]]; then
     DEBUG_FLAG="-d"
 fi
 
 # Enable force install if the debug parameter is true
-if [[ "${ORB_VAL_FORCE_INSTALL}" == "true" ]]; then
+if [[ "${ORB_VAL_FORCE_INSTALL}" == "1" ]]; then
     FORCE_INSTALL_FLAG="-f"
 fi
 
