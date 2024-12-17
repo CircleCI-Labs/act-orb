@@ -49,6 +49,10 @@ parameters:
     type: boolean
     default: true
     description: Enables caching of actions using CircleCI caching
+  cache-images:
+    type: boolean
+    default: true
+    description: Enables caching of Docker images used by Act using CircleCI caching
   defaultbranch:
     type: string
     default: main
@@ -85,16 +89,31 @@ parameters:
     type: string
     default: ""
     description: Additional flags to be passed to the `act` CLI
+  cache-key-prefix:
+    type: string
+    default: v1
+    description: Prefixes a string to the all cache keys
 
 steps:
   - when:
       condition: << parameters.cache-actions >>
       steps:
         - restore_cache:
-            name: Restoring cache for Act...
+            name: Restoring cache for Act's Actions...
             keys:
-              - act-cache-{{ checksum "<< parameters.workflow-file >>" }}
-              - act-cache
+              - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+              - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-
+  - when:
+      condition: << parameters.cache-images >>
+      steps:
+        - restore_cache:
+            name: Restoring cache for Act's Images...
+            keys:
+              - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
+              - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-
+        - run:
+            name: Load Act's Images...
+            command: <<include(scripts/load-docker-image.sh)>>
   - run:
       name: Run Act
       environment:
@@ -124,7 +143,20 @@ steps:
       condition: << parameters.cache-actions >>
       steps:
         - save_cache:
-            name: Saving cache for Act...
-            key: act-cache-{{ checksum "<< parameters.workflow-file >>" }}
+            name: Saving cache for Act's Actions...
+            key: << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
+  - when:
+      condition: << parameters.cache-images >>
+      steps:
+        - run:
+            name: Save Act's Images...
+            environment:
+              ORB_VAL_PLATFORM: <<parameters.platform>>
+            command: <<include(scripts/save-docker-image.sh)>>
+        - save_cache:
+            name: Saving cache for Act's Images...
+            key: << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
+            paths:
+              - /tmp/act-images.tar

@@ -17,6 +17,14 @@ parameters:
     type: string
     default: "/home/circleci/bin"
     description: The directory where Act should be installed
+  force-install:
+    type: boolean
+    default: false
+    description: Force install Act if already present
+  cache-cli:
+    type: boolean
+    default: true
+    description: Enables caching of Act CLI using CircleCI caching
   env-file:
     type: string
     default: /tmp/act.env
@@ -97,6 +105,10 @@ parameters:
     type: boolean
     default: true
     description: Enables caching of GitHub Actions using CircleCI caching
+  cache-images:
+    type: boolean
+    default: true
+    description: Enables caching of Docker images used by Act using CircleCI caching
   defaultbranch:
     type: string
     default: main
@@ -145,6 +157,10 @@ parameters:
     type: boolean
     default: false
     description: Skips creating the workflow file
+  cache-key-prefix:
+    type: string
+    default: v1
+    description: Prefixes a string to the all cache keys
 
 steps:
   - when:
@@ -159,6 +175,9 @@ steps:
             version: << parameters.version >>
             debug: << parameters.debug >>
             bin-dir: << parameters.bin-dir >>
+            force-install: << parameters.force-install >>
+            cache-cli: << parameters.cache-cli >>
+            cache-key-prefix: << parameters.cache-key-prefix >>
   - when:
       condition:
         not: << parameters.skip-create-env-and-secret-file >>
@@ -193,6 +212,7 @@ steps:
       directory: << parameters.directory >>
       action-offline-mode: << parameters.action-offline-mode >>
       cache-actions: << parameters.cache-actions >>
+      cache-images: << parameters.cache-images >>
       defaultbranch: << parameters.defaultbranch >>
       job: << parameters.job >>
       pull: << parameters.pull >>
@@ -202,3 +222,4 @@ steps:
       input-file: << parameters.input-file >>
       var-file: << parameters.var-file >>
       additional-act-flags: << parameters.additional-act-flags >>
+      cache-key-prefix: << parameters.cache-key-prefix >>
