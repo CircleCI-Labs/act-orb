@@ -18,7 +18,7 @@ workflows:
       # Ignore RC010
       - orb-tools/review:
           filters: *filters
-          exclude: "RC010,RC009,RC008"
+          exclude: "RC010"
       - shellcheck/check:
           filters: *filters
           severity: error
