@@ -157,6 +157,10 @@ parameters:
     type: boolean
     default: false
     description: Skips creating the workflow file
+  cache-key-prefix:
+    type: string
+    default: v5
+    description: Prefixes a string to the all cache keys
 
 steps:
   - when:
@@ -173,6 +177,7 @@ steps:
             bin-dir: << parameters.bin-dir >>
             force-install: << parameters.force-install >>
             cache-cli: << parameters.cache-cli >>
+            cache-key-prefix: << parameters.cache-key-prefix >>
   - when:
       condition:
         not: << parameters.skip-create-env-and-secret-file >>
@@ -217,3 +222,4 @@ steps:
       input-file: << parameters.input-file >>
       var-file: << parameters.var-file >>
       additional-act-flags: << parameters.additional-act-flags >>
+      cache-key-prefix: << parameters.cache-key-prefix >>

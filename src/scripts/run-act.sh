@@ -60,11 +60,11 @@ echo ${ORB_VAL_BIND}
 echo ${ORB_VAL_ACTION_OFFLINE_MODE}
 
 # Check boolean flags
-if [ "${ORB_VAL_PULL}" = "1" ]; then
-    act_cmd="$act_cmd --pull"
+if [ "${ORB_VAL_PULL}" = "0" ]; then
+    act_cmd="$act_cmd --pull=false"
 fi
-if [ "${ORB_VAL_REBUILD}" = "1" ]; then
-    act_cmd="$act_cmd --rebuild"
+if [ "${ORB_VAL_REBUILD}" = "0" ]; then
+    act_cmd="$act_cmd --rebuild=false"
 fi
 if [ "${ORB_VAL_REUSE}" = "1" ]; then
     act_cmd="$act_cmd --reuse"

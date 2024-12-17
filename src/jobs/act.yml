@@ -157,6 +157,10 @@ parameters:
     type: boolean
     default: false
     description: Skips creating the workflow file
+  cache-key-prefix:
+    type: string
+    default: v5
+    description: Prefixes a string to the all cache keys
   executor:
     type: executor
     default: default
@@ -204,3 +208,4 @@ steps:
       skip-install: << parameters.skip-install >>
       skip-create-env-and-secret-file: << parameters.skip-create-env-and-secret-file >>
       skip-create-workflow-file: << parameters.skip-create-workflow-file >>
+      cache-key-prefix: << parameters.cache-key-prefix >>

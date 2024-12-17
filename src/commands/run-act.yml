@@ -89,6 +89,10 @@ parameters:
     type: string
     default: ""
     description: Additional flags to be passed to the `act` CLI
+  cache-key-prefix:
+    type: string
+    default: v5
+    description: Prefixes a string to the all cache keys
 
 steps:
   - when:
@@ -105,8 +109,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act's Actions...
             keys:
-              - v4-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
-              - v4-act-cache-actions-{{ arch }}-
+              - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+              - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -129,8 +133,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act's Images...
             keys:
-              - v4-act-cache-images-{{ arch }}-<< parameters.platform >>
-              - v4-act-cache-images-{{ arch }}-
+              - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
+              - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -181,7 +185,7 @@ steps:
       steps:
         - save_cache:
             name: Saving cache for Act's Actions...
-            key: v4-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+            key: << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
         - run:
@@ -210,6 +214,6 @@ steps:
               act --version || true
         - save_cache:
             name: Saving cache for Act's Images...
-            key: v4-act-cache-images-{{ arch }}-<< parameters.platform >>
+            key: << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
             paths:
               - /tmp/act-images.tar
