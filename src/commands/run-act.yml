@@ -97,7 +97,6 @@ steps:
         - run:
             command: |
               ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
               ls -lah ~/
               ls -lah ~/.cache/act || true
               echo $PATH
@@ -111,7 +110,6 @@ steps:
         - run:
             command: |
               ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
               ls -lah ~/
               ls -lah ~/.cache/act || true
               echo $PATH
@@ -123,7 +121,6 @@ steps:
         - run:
             command: |
               ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
               ls -lah ~/
               ls -lah ~/.cache/act || true
               echo $PATH
@@ -137,7 +134,6 @@ steps:
         - run:
             command: |
               ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
               ls -lah ~/
               ls -lah ~/.cache/act || true
               echo $PATH
@@ -152,7 +148,6 @@ steps:
             command: |
               docker images
               ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
               ls -lah ~/
               ls -lah ~/.cache/act || true
               echo $PATH
@@ -194,7 +189,6 @@ steps:
         - run:
             command: |
               ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
               ls -lah ~/
               ls -lah ~/.cache/act || true
               echo $PATH
@@ -211,7 +205,6 @@ steps:
         - run:
             command: |
               ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
               ls -lah ~/
               ls -lah ~/.cache/act || true
               echo $PATH
