@@ -33,6 +33,8 @@ jobs:
             who-to-greet: "Mona the Octocat"
           env: |
             hello-world: "example-value"
+          force-install: true
+          debug: true
   
 workflows:
   test-deploy:
@@ -54,11 +56,15 @@ workflows:
             image: android:2024.11.1
             resource_class: medium 
             docker_layer_caching: true
+          force-install: true
+          debug: true
           filters: *filters
       - act/act:
           name: Testing Running Workflow File
           workflow-file: .github/workflows/hello-world.yml
           skip-create-workflow-file: true
+          force-install: true
+          debug: true
           filters: *filters
       # The orb must be re-packed for publishing, and saved to the workspace.
       - orb-tools/pack:

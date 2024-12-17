@@ -5,6 +5,10 @@ BIN_DIR_FLAG=""
 DEBUG_FLAG=""
 FORCE_INSTALL_FLAG=""
 
+echo "DEBUG: ${ORB_VAL_DEBUG}"
+echo "FORCE: ${ORB_VAL_FORCE_INSTALL}"
+echo "${ORB_VAL_DEBUG}"
+
 # Add bin-dir flag if a custom directory is provided
 if [[ -n "${ORB_VAL_BIN_DIR}" && "${ORB_VAL_BIN_DIR}" != "./bin" ]]; then
     BIN_DIR_FLAG="-b ${ORB_VAL_BIN_DIR}"
@@ -19,6 +23,11 @@ fi
 if [[ "${ORB_VAL_FORCE_INSTALL}" == "true" ]]; then
     FORCE_INSTALL_FLAG="-f"
 fi
+
+echo "DEBUG FLAG: ${DEBUG_FLAG}"
+echo "FORCE FLAG: ${FORCE_INSTALL_FLAG}"
+echo "${DEBUG_FLAG}"
+echo "${FORCE_INSTALL_FLAG}"
 
 # Install Act with the correct options
 INSTALL_CMD="curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/james-crowley/act/refs/heads/master/install.sh | sudo bash -s --"
