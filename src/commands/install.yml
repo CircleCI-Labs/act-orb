@@ -27,6 +27,13 @@ steps:
       condition: << parameters.cache-cli >>
       steps:
         - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              echo $PATH
+              which act || true
+              act --version || true
+        - run:
             name: Store Act CLI version as a temporary checksum file
             environment:
               ORB_VAL_VERSION: <<parameters.version>>
@@ -36,6 +43,13 @@ steps:
             keys:
               - act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
               - act-cache-cli-{{ arch }}-
+        - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              echo $PATH
+              which act || true
+              act --version || true
   - run:
       name: "Installing Act << parameters.version >>"
       environment:

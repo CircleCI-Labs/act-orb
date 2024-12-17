@@ -94,24 +94,70 @@ steps:
   - when:
       condition: << parameters.cache-actions >>
       steps:
+        - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              ls -lah ~/
+              ls -lah ~/.cache/act || true
+              echo $PATH
+              which act || true
+              act --version || true
         - restore_cache:
             name: Restoring cache for Act's Actions...
             keys:
               - act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
               - act-cache-actions-{{ arch }}-
+        - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              ls -lah ~/
+              ls -lah ~/.cache/act || true
+              echo $PATH
+              which act || true
+              act --version || true
   - when:
       condition: << parameters.cache-images >>
       steps:
+        - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              ls -lah ~/
+              ls -lah ~/.cache/act || true
+              echo $PATH
+              which act || true
+              act --version || true
         - restore_cache:
             name: Restoring cache for Act's Images...
             keys:
               - act-cache-images-{{ arch }}-<< parameters.platform >>
               - act-cache-images-{{ arch }}-
         - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              ls -lah ~/
+              ls -lah ~/.cache/act || true
+              echo $PATH
+              which act || true
+              act --version || true
+        - run:
             name: Load Act's Images...
             environment:
               ORB_VAL_PLATFORM: <<parameters.platform>>
             command: <<include(scripts/load-docker-image.sh)>>
+        - run:
+            command: |
+              docker images
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              ls -lah ~/
+              ls -lah ~/.cache/act || true
+              echo $PATH
+              which act || true
+              act --version || true
   - run:
       name: Run Act
       environment:
@@ -145,6 +191,15 @@ steps:
             key: act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
+        - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              ls -lah ~/
+              ls -lah ~/.cache/act || true
+              echo $PATH
+              which act || true
+              act --version || true
   - when:
       condition: << parameters.cache-images >>
       steps:
@@ -153,6 +208,15 @@ steps:
             environment:
               ORB_VAL_PLATFORM: <<parameters.platform>>
             command: <<include(scripts/save-docker-image.sh)>>
+        - run:
+            command: |
+              ls -lah /tmp/
+              ls -lah << parameters.bin-dir >>/
+              ls -lah ~/
+              ls -lah ~/.cache/act || true
+              echo $PATH
+              which act || true
+              act --version || true
         - save_cache:
             name: Saving cache for Act's Images...
             key: act-cache-images-{{ arch }}-<< parameters.platform >>
