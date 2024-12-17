@@ -23,20 +23,13 @@ parameters:
     description: Enables caching of Act CLI using CircleCI caching
   cache-key-prefix:
     type: string
-    default: v5
+    default: v1
     description: Prefixes a string to the all cache keys
 
 steps:
   - when:
       condition: << parameters.cache-cli >>
       steps:
-        - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
-              echo $PATH
-              which act || true
-              act --version || true
         - run:
             name: Store Act CLI version as a temporary checksum file
             environment:
@@ -47,13 +40,6 @@ steps:
             keys:
               - << parameters.cache-key-prefix >>-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
               - << parameters.cache-key-prefix >>-act-cache-cli-{{ arch }}-
-        - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah << parameters.bin-dir >>/
-              echo $PATH
-              which act || true
-              act --version || true
   - run:
       name: "Installing Act << parameters.version >>"
       environment:

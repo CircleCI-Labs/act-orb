@@ -91,70 +91,29 @@ parameters:
     description: Additional flags to be passed to the `act` CLI
   cache-key-prefix:
     type: string
-    default: v5
+    default: v1
     description: Prefixes a string to the all cache keys
 
 steps:
   - when:
       condition: << parameters.cache-actions >>
       steps:
-        - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah ~/
-              ls -lah ~/.cache/act || true
-              echo $PATH
-              which act || true
-              act --version || true
         - restore_cache:
             name: Restoring cache for Act's Actions...
             keys:
               - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
               - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-
-        - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah ~/
-              ls -lah ~/.cache/act || true
-              echo $PATH
-              which act || true
-              act --version || true
   - when:
       condition: << parameters.cache-images >>
       steps:
-        - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah ~/
-              ls -lah ~/.cache/act || true
-              echo $PATH
-              which act || true
-              act --version || true
         - restore_cache:
             name: Restoring cache for Act's Images...
             keys:
               - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
               - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-
         - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah ~/
-              ls -lah ~/.cache/act || true
-              echo $PATH
-              which act || true
-              act --version || true
-        - run:
             name: Load Act's Images...
             command: <<include(scripts/load-docker-image.sh)>>
-        - run:
-            command: |
-              docker images
-              ls -lah /tmp/
-              ls -lah ~/
-              ls -lah ~/.cache/act || true
-              echo $PATH
-              which act || true
-              act --version || true
   - run:
       name: Run Act
       environment:
@@ -188,14 +147,6 @@ steps:
             key: << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
-        - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah ~/
-              ls -lah ~/.cache/act || true
-              echo $PATH
-              which act || true
-              act --version || true
   - when:
       condition: << parameters.cache-images >>
       steps:
@@ -204,14 +155,6 @@ steps:
             environment:
               ORB_VAL_PLATFORM: <<parameters.platform>>
             command: <<include(scripts/save-docker-image.sh)>>
-        - run:
-            command: |
-              ls -lah /tmp/
-              ls -lah ~/
-              ls -lah ~/.cache/act || true
-              echo $PATH
-              which act || true
-              act --version || true
         - save_cache:
             name: Saving cache for Act's Images...
             key: << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>

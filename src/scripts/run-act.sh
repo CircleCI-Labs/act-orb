@@ -52,13 +52,6 @@ if [ -n "${ORB_VAL_JOB}" ]; then
     act_cmd="$act_cmd --job ${ORB_VAL_JOB}"
 fi
 
-echo ${ORB_VAL_PULL}
-echo ${ORB_VAL_REBUILD}
-echo ${ORB_VAL_REUSE}
-echo ${ORB_VAL_DETECT_EVENT}
-echo ${ORB_VAL_BIND}
-echo ${ORB_VAL_ACTION_OFFLINE_MODE}
-
 # Check boolean flags
 if [ "${ORB_VAL_PULL}" = "0" ]; then
     act_cmd="$act_cmd --pull=false"

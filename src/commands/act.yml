@@ -159,7 +159,7 @@ parameters:
     description: Skips creating the workflow file
   cache-key-prefix:
     type: string
-    default: v5
+    default: v1
     description: Prefixes a string to the all cache keys
 
 steps:
