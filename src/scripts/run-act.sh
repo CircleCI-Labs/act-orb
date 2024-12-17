@@ -60,25 +60,25 @@ echo ${ORB_VAL_BIND}
 echo ${ORB_VAL_ACTION_OFFLINE_MODE}
 
 # Check boolean flags
-if [ "${ORB_VAL_PULL}" = true ]; then
+if [ "${ORB_VAL_PULL}" = "1" ]; then
     act_cmd="$act_cmd --pull"
 fi
-if [ "${ORB_VAL_REBUILD}" = true ]; then
+if [ "${ORB_VAL_REBUILD}" = "1" ]; then
     act_cmd="$act_cmd --rebuild"
 fi
-if [ "${ORB_VAL_REUSE}" = true ]; then
+if [ "${ORB_VAL_REUSE}" = "1" ]; then
     act_cmd="$act_cmd --reuse"
 fi
-if [ "${ORB_VAL_DETECT_EVENT}" = true ]; then
+if [ "${ORB_VAL_DETECT_EVENT}" = "1" ]; then
     act_cmd="$act_cmd --detect-event"
 fi
-if [ "${ORB_VAL_BIND}" = true ]; then
+if [ "${ORB_VAL_BIND}" = "1" ]; then
     act_cmd="$act_cmd --bind"
 fi
-if [ "${ORB_VAL_VERBOSE}" = true ]; then
+if [ "${ORB_VAL_VERBOSE}" = "1" ]; then
     act_cmd="$act_cmd --verbose"
 fi
-if [ "${ORB_VAL_ACTION_OFFLINE_MODE}" = true ]; then
+if [ "${ORB_VAL_ACTION_OFFLINE_MODE}" = "1" ]; then
     act_cmd="$act_cmd --action-offline-mode"
 fi
 
