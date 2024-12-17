@@ -7,7 +7,7 @@ parameters:
     description: The version of Act to install
   debug:
     type: boolean
-    default: true
+    default: false
     description: Enable debug logging for installing Act
   bin-dir:
     type: string
@@ -41,8 +41,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act CLI...
             keys:
-              - v1-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
-              - v1-act-cache-cli-{{ arch }}-
+              - v2-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
+              - v2-act-cache-cli-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -54,7 +54,7 @@ steps:
       name: "Installing Act << parameters.version >>"
       environment:
         ORB_VAL_VERSION: <<parameters.version>>
-        ORB_VAL_DEBUG: <<parameters.debug>>
+        ORB_VAL_DEBUG: true
         ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
         ORB_VAL_FORCE_INSTALL: <<parameters.force-install>>
       command: <<include(scripts/install.sh)>>
@@ -63,6 +63,6 @@ steps:
       steps:
         - save_cache:
             name: Saving cache for Act CLI...
-            key: v1-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
+            key: v2-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
             paths:
               - << parameters.bin-dir >>/act

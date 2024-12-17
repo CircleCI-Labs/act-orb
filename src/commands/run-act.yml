@@ -105,8 +105,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act's Actions...
             keys:
-              - v1-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
-              - v1-act-cache-actions-{{ arch }}-
+              - v2-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+              - v2-act-cache-actions-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -129,8 +129,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act's Images...
             keys:
-              - v1-act-cache-images-{{ arch }}-<< parameters.platform >>
-              - v1-act-cache-images-{{ arch }}-
+              - v2-act-cache-images-{{ arch }}-<< parameters.platform >>
+              - v2-act-cache-images-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -141,8 +141,6 @@ steps:
               act --version || true
         - run:
             name: Load Act's Images...
-            environment:
-              ORB_VAL_PLATFORM: <<parameters.platform>>
             command: <<include(scripts/load-docker-image.sh)>>
         - run:
             command: |
@@ -183,7 +181,7 @@ steps:
       steps:
         - save_cache:
             name: Saving cache for Act's Actions...
-            key: v1-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+            key: v2-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
         - run:
@@ -212,6 +210,6 @@ steps:
               act --version || true
         - save_cache:
             name: Saving cache for Act's Images...
-            key: v1-act-cache-images-{{ arch }}-<< parameters.platform >>
+            key: v2-act-cache-images-{{ arch }}-<< parameters.platform >>
             paths:
               - /tmp/act-images-${DOCKER_IMAGE}.tar

@@ -1,7 +1,6 @@
 #!/bin/bash
 
-DOCKER_IMAGE=$(echo "${ORB_VAL_PLATFORM}" | cut -d '=' -f2)
-IMAGE_FILE="/tmp/act-images-${DOCKER_IMAGE}.tar"
+IMAGE_FILE="/tmp/act-images.tar"
 
 if [ -f "${IMAGE_FILE}" ]; then
     echo "Loading Docker image from $IMAGE_FILE..."
