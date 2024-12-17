@@ -105,8 +105,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act's Actions...
             keys:
-              - act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
-              - act-cache-actions-{{ arch }}-
+              - v1-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+              - v1-act-cache-actions-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -129,8 +129,8 @@ steps:
         - restore_cache:
             name: Restoring cache for Act's Images...
             keys:
-              - act-cache-images-{{ arch }}-<< parameters.platform >>
-              - act-cache-images-{{ arch }}-
+              - v1-act-cache-images-{{ arch }}-<< parameters.platform >>
+              - v1-act-cache-images-{{ arch }}-
         - run:
             command: |
               ls -lah /tmp/
@@ -183,7 +183,7 @@ steps:
       steps:
         - save_cache:
             name: Saving cache for Act's Actions...
-            key: act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
+            key: v1-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
             paths:
               - ~/.cache/act
         - run:
@@ -212,6 +212,6 @@ steps:
               act --version || true
         - save_cache:
             name: Saving cache for Act's Images...
-            key: act-cache-images-{{ arch }}-<< parameters.platform >>
+            key: v1-act-cache-images-{{ arch }}-<< parameters.platform >>
             paths:
               - /tmp/act-images-${DOCKER_IMAGE}.tar
