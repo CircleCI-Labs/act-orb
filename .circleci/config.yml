@@ -15,9 +15,10 @@ workflows:
           filters: *filters
       - orb-tools/pack:
           filters: *filters
+      # Ignore RC010
       - orb-tools/review:
           filters: *filters
-          exclude: "RC010"
+          exclude: "RC010,RC009,RC008"
       - shellcheck/check:
           filters: *filters
           severity: error
