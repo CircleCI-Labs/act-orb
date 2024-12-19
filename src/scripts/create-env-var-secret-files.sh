@@ -53,9 +53,9 @@ for KEY in "${!ACTION_ENV_VARS[@]}"; do
 done
 
 # Write SECRET_ENV_VARS to the .secrets file
-echo "Writing sensitive environment variables to ${ORB_VAL_SECRET_ENV_FILE}"
+echo "Writing sensitive environment variables to ${ORB_VAL_SECRET_FILE}"
 for KEY in "${!SECRET_ENV_VARS[@]}"; do
-    echo "$KEY=${SECRET_ENV_VARS[$KEY]}" >> "${ORB_VAL_SECRET_ENV_FILE}"
+    echo "$KEY=${SECRET_ENV_VARS[$KEY]}" >> "${ORB_VAL_SECRET_FILE}"
 done
 
 # Write VARIABLE_ENV_VARS to the .vars file
