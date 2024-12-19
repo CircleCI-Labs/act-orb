@@ -37,6 +37,14 @@ parameters:
     type: string
     default: GITHUB_TOKEN
     description: A comma-separated list of environment variables treated as secrets
+  var-file:
+    type: string
+    default: /tmp/act.vars
+    description: Path to store or fetch variables file
+  variables:
+    type: string
+    default: ""
+    description: A comma-separated list of variables treated as ${{ vars.VARIABLE }}
   workflow-file:
     type: string
     default: /tmp/workflow.yml
@@ -137,10 +145,6 @@ parameters:
     type: string
     default: .input
     description: Path to the file containing action inputs
-  var-file:
-    type: string
-    default: /tmp/act.vars
-    description: Path to store or fetch variables file
   additional-act-flags:
     type: string
     default: ""
@@ -207,6 +211,7 @@ steps:
       env-file: << parameters.env-file >>
       secret-file: << parameters.secret-file >>
       event-file: << parameters.event-file >>
+      var-file: << parameters.var-file >>
       actor: << parameters.actor >>
       bind: << parameters.bind >>
       verbose: << parameters.verbose >>
@@ -222,6 +227,5 @@ steps:
       remote-name: << parameters.remote-name >>
       reuse: << parameters.reuse >>
       input-file: << parameters.input-file >>
-      var-file: << parameters.var-file >>
       additional-act-flags: << parameters.additional-act-flags >>
       cache-key-prefix: << parameters.cache-key-prefix >>
