@@ -93,6 +93,10 @@ parameters:
     type: string
     default: v1
     description: Prefixes a string to the all cache keys
+  name:
+    type: string
+    default: Run Act
+    description: Allows for customizing the name of run act step
 
 steps:
   - when:
@@ -115,7 +119,7 @@ steps:
             name: Load Act's Images...
             command: <<include(scripts/load-docker-image.sh)>>
   - run:
-      name: Run Act
+      name: << parameters.name >>
       environment:
         ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
         ORB_VAL_PLATFORM: <<parameters.platform>>

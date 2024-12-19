@@ -165,6 +165,10 @@ parameters:
     type: string
     default: v1
     description: Prefixes a string to the all cache keys
+  name:
+    type: string
+    default: Run Act
+    description: Allows for customizing the name of run act step
 
 steps:
   - when:
@@ -229,3 +233,4 @@ steps:
       input-file: << parameters.input-file >>
       additional-act-flags: << parameters.additional-act-flags >>
       cache-key-prefix: << parameters.cache-key-prefix >>
+      name: << parameters.step-name >>
