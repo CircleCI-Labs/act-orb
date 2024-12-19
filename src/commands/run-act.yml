@@ -7,7 +7,7 @@ parameters:
     description: Path to the workflow file to execute
   platform:
     type: string
-    default: ubuntu-latest=node:16-buster-slim
+    default: ubuntu-latest=catthehacker/ubuntu:act-latest
     description: Custom image to use per platform
   env-file:
     type: string
@@ -43,7 +43,7 @@ parameters:
     description: Working directory for the workflow
   action-offline-mode:
     type: boolean
-    default: false
+    default: true
     description: Enable offline mode for actions (runs without fetching actions from remote sources)
   cache-actions:
     type: boolean
@@ -75,7 +75,7 @@ parameters:
     description: Specifies the Git remote name for retrieving the repo URL
   reuse:
     type: boolean
-    default: false
+    default: true
     description: Prevents container removal after successful runs for maintaining state
   input-file:
     type: string
