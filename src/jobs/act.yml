@@ -37,6 +37,14 @@ parameters:
     type: string
     default: GITHUB_TOKEN
     description: A comma-separated list of environment variables treated as secrets
+  var-file:
+    type: string
+    default: /tmp/act.vars
+    description: Path to store or fetch variables file
+  variables:
+    type: string
+    default: ""
+    description: A comma-separated list of variables treated as ${{ vars.VARIABLE }}
   workflow-file:
     type: string
     default: /tmp/workflow.yml
@@ -71,7 +79,7 @@ parameters:
     description: Image to run the job on (e.g. ubuntu-latest, windows-latest)
   platform:
     type: string
-    default: ubuntu-latest=node:16-buster-slim
+    default: ubuntu-latest=catthehacker/ubuntu:act-latest
     description: Custom image to use per platform
   event-file:
     type: string
@@ -99,7 +107,7 @@ parameters:
     description: Working directory for the workflow
   action-offline-mode:
     type: boolean
-    default: false
+    default: true
     description: Enable offline mode for actions (runs without fetching actions from remote sources)
   cache-actions:
     type: boolean
@@ -131,16 +139,12 @@ parameters:
     description: Specifies the Git remote name for retrieving the repo URL
   reuse:
     type: boolean
-    default: false
+    default: true
     description: Prevents container removal after successful runs for maintaining state
   input-file:
     type: string
     default: .input
     description: Path to the file containing action inputs
-  var-file:
-    type: string
-    default: .vars
-    description: Path to the file containing variable definitions
   additional-act-flags:
     type: string
     default: ""
@@ -149,10 +153,10 @@ parameters:
     type: boolean
     default: false
     description: Skips installing Act
-  skip-create-env-and-secret-file:
+  skip-create-env-var-secret-files:
     type: boolean
     default: false
-    description: Skips generating env and secret files
+    description: Skips generating env, var and secret files
   skip-create-workflow-file:
     type: boolean
     default: false
@@ -178,6 +182,8 @@ steps:
       cache-cli: << parameters.cache-cli >>
       secret-file: << parameters.secret-file >>
       secrets: << parameters.secrets >>
+      var-file: << parameters.var-file >>
+      variables: << parameters.variables >>
       workflow-file: << parameters.workflow-file >>
       uses: << parameters.uses >>
       with: << parameters.with >>
@@ -203,9 +209,8 @@ steps:
       remote-name: << parameters.remote-name >>
       reuse: << parameters.reuse >>
       input-file: << parameters.input-file >>
-      var-file: << parameters.var-file >>
       additional-act-flags: << parameters.additional-act-flags >>
       skip-install: << parameters.skip-install >>
-      skip-create-env-and-secret-file: << parameters.skip-create-env-and-secret-file >>
+      skip-create-env-var-secret-files: << parameters.skip-create-env-var-secret-files >>
       skip-create-workflow-file: << parameters.skip-create-workflow-file >>
       cache-key-prefix: << parameters.cache-key-prefix >>

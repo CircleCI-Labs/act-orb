@@ -7,7 +7,7 @@ parameters:
     description: Path to the workflow file to execute
   platform:
     type: string
-    default: ubuntu-latest=node:16-buster-slim
+    default: ubuntu-latest=catthehacker/ubuntu:act-latest
     description: Custom image to use per platform
   env-file:
     type: string
@@ -43,7 +43,7 @@ parameters:
     description: Working directory for the workflow
   action-offline-mode:
     type: boolean
-    default: false
+    default: true
     description: Enable offline mode for actions (runs without fetching actions from remote sources)
   cache-actions:
     type: boolean
@@ -75,7 +75,7 @@ parameters:
     description: Specifies the Git remote name for retrieving the repo URL
   reuse:
     type: boolean
-    default: false
+    default: true
     description: Prevents container removal after successful runs for maintaining state
   input-file:
     type: string
@@ -83,8 +83,8 @@ parameters:
     description: Path to the file containing action inputs
   var-file:
     type: string
-    default: .vars
-    description: Path to the file containing variable definitions
+    default: /tmp/act.vars
+    description: Path to the variables file
   additional-act-flags:
     type: string
     default: ""
@@ -93,6 +93,10 @@ parameters:
     type: string
     default: v1
     description: Prefixes a string to the all cache keys
+  step-name:
+    type: string
+    default: Run Act
+    description: Allows for customizing the name of run act step
 
 steps:
   - when:
@@ -115,7 +119,7 @@ steps:
             name: Load Act's Images...
             command: <<include(scripts/load-docker-image.sh)>>
   - run:
-      name: Run Act
+      name: << parameters.step-name >>
       environment:
         ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
         ORB_VAL_PLATFORM: <<parameters.platform>>
