@@ -139,8 +139,8 @@ parameters:
     description: Path to the file containing action inputs
   var-file:
     type: string
-    default: .vars
-    description: Path to the file containing variable definitions
+    default: /tmp/act.vars
+    description: Path to store or fetch variables file
   additional-act-flags:
     type: string
     default: ""
@@ -149,10 +149,10 @@ parameters:
     type: boolean
     default: false
     description: Skips installing Act
-  skip-create-env-and-secret-file:
+  skip-create-env-var-secret-files:
     type: boolean
     default: false
-    description: Skips generating env and secret files
+    description: Skips generating env, var and secret files
   skip-create-workflow-file:
     type: boolean
     default: false
@@ -206,6 +206,6 @@ steps:
       var-file: << parameters.var-file >>
       additional-act-flags: << parameters.additional-act-flags >>
       skip-install: << parameters.skip-install >>
-      skip-create-env-and-secret-file: << parameters.skip-create-env-and-secret-file >>
+      skip-create-env-var-secret-files: << parameters.skip-create-env-var-secret-files >>
       skip-create-workflow-file: << parameters.skip-create-workflow-file >>
       cache-key-prefix: << parameters.cache-key-prefix >>
