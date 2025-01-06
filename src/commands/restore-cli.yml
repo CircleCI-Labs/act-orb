@@ -1,0 +1,23 @@
+description: Restore cached Act CLI
+
+parameters:
+  version:
+    type: string
+    default: "latest"
+    description: The version of Act to install
+  cache-key-prefix:
+    type: string
+    default: v1
+    description: Prefixes a string to the all cache keys
+
+steps:
+  - run:
+      name: Store Act CLI version as a temporary checksum file
+      environment:
+        ORB_VAL_VERSION: <<parameters.version>>
+      command: <<include(scripts/act-binary-cache.sh)>>
+  - restore_cache:
+      name: Restoring cache for Act CLI...
+      keys:
+        - << parameters.cache-key-prefix >>-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
+        - << parameters.cache-key-prefix >>-act-cache-cli-{{ arch }}-

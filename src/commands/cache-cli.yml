@@ -1,0 +1,18 @@
+description: Cache Act CLI
+
+parameters:
+  bin-dir:
+    type: string
+    default: "/home/circleci/bin"
+    description: The directory where Act should be installed
+  cache-key-prefix:
+    type: string
+    default: v1
+    description: Prefixes a string to the all cache keys
+
+steps:
+  - save_cache:
+      name: Saving cache for Act CLI...
+      key: << parameters.cache-key-prefix >>-act-cache-cli-{{ arch }}-{{ checksum "/tmp/.act-version" }}
+      paths:
+        - << parameters.bin-dir >>/act

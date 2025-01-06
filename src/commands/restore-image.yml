@@ -1,0 +1,21 @@
+description: Restore cached Act Images
+
+parameters:
+  platform:
+    type: string
+    default: ubuntu-latest=catthehacker/ubuntu:act-latest
+    description: Custom image to use per platform
+  cache-key-prefix:
+    type: string
+    default: v1
+    description: Prefixes a string to the all cache keys
+
+steps:
+  - restore_cache:
+      name: Restoring cache for Act's Images...
+      keys:
+        - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
+        - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-
+  - run:
+      name: Load Act's Images...
+      command: <<include(scripts/load-docker-image.sh)>>

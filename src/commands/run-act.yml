@@ -102,22 +102,14 @@ steps:
   - when:
       condition: << parameters.cache-actions >>
       steps:
-        - restore_cache:
-            name: Restoring cache for Act's Actions...
-            keys:
-              - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
-              - << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-
+        - restore-actions:
+            cache-key-prefix: <<parameters.cache-key-prefix>>
   - when:
       condition: << parameters.cache-images >>
       steps:
-        - restore_cache:
-            name: Restoring cache for Act's Images...
-            keys:
-              - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
-              - << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-
-        - run:
-            name: Load Act's Images...
-            command: <<include(scripts/load-docker-image.sh)>>
+        - restore-image:
+            platform: <<parameters.platform>>
+            cache-key-prefix: <<parameters.cache-key-prefix>>
   - run:
       name: << parameters.step-name >>
       environment:
@@ -146,21 +138,11 @@ steps:
   - when:
       condition: << parameters.cache-actions >>
       steps:
-        - save_cache:
-            name: Saving cache for Act's Actions...
-            key: << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ checksum "<< parameters.workflow-file >>" }}
-            paths:
-              - ~/.cache/act
+        - cache-actions:
+            cache-key-prefix: <<parameters.cache-key-prefix>>
   - when:
       condition: << parameters.cache-images >>
       steps:
-        - run:
-            name: Save Act's Images...
-            environment:
-              ORB_VAL_PLATFORM: <<parameters.platform>>
-            command: <<include(scripts/save-docker-image.sh)>>
-        - save_cache:
-            name: Saving cache for Act's Images...
-            key: << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
-            paths:
-              - /tmp/act-images.tar
+        - cache-image:
+            platform: <<parameters.platform>>
+            cache-key-prefix: <<parameters.cache-key-prefix>>

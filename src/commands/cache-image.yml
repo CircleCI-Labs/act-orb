@@ -1,0 +1,23 @@
+description: Cache Act Images
+
+parameters:
+  platform:
+    type: string
+    default: ubuntu-latest=catthehacker/ubuntu:act-latest
+    description: Custom image to use per platform
+  cache-key-prefix:
+    type: string
+    default: v1
+    description: Prefixes a string to the all cache keys
+
+steps:
+  - run:
+      name: Save Act's Images...
+      environment:
+        ORB_VAL_PLATFORM: <<parameters.platform>>
+      command: <<include(scripts/save-docker-image.sh)>>
+  - save_cache:
+      name: Saving cache for Act's Images...
+      key: << parameters.cache-key-prefix >>-act-cache-images-{{ arch }}-<< parameters.platform >>
+      paths:
+        - /tmp/act-images.tar
