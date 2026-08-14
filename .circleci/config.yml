@@ -1,12 +1,24 @@
 version: 2.1
 setup: true
 orbs:
-  orb-tools: circleci/orb-tools@12.3.0
-  shellcheck: circleci/shellcheck@3.1
+  orb-tools: circleci/orb-tools@12.5.0
+  shellcheck: circleci/shellcheck@3.4.0
 
 filters: &filters
   tags:
     only: /.*/
+
+jobs:
+  shfmt-check:
+    # Pinned to an exact tag of the maintainer's own published image -- no
+    # credentials required, matches this repo's "pin everything" posture.
+    docker:
+      - image: mvdan/shfmt:v3.13.1-alpine
+    steps:
+      - checkout
+      - run:
+          name: shfmt (shell formatting)
+          command: shfmt -i 4 -ci -sr -d src/scripts/*.sh
 
 workflows:
   lint-pack:
@@ -22,10 +34,12 @@ workflows:
       - shellcheck/check:
           filters: *filters
           severity: error
+      - shfmt-check:
+          filters: *filters
       # Triggers the next workflow in the Orb Development Kit.
       - orb-tools/continue:
           pipeline_number: << pipeline.number >>
           vcs_type: << pipeline.project.type >>
           orb_name: act
-          requires: [orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check]
+          requires: [orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check, shfmt-check]
           filters: *filters

@@ -28,7 +28,11 @@ parameters:
   bind:
     type: boolean
     default: true
-    description: Enables the bind flag which binds working directory to container, rather than copy
+    description: >
+      Enables the bind flag which binds working directory to container, rather than copy. NOTE:
+      Act's own CLI default for --bind is false; this orb defaults to true so the checkout
+      directory (and this command's own output-capture file, see `outputs`) is shared with the
+      container rather than copied. See the README's "Defaults that deviate from Act" section.
   verbose:
     type: boolean
     default: false
@@ -36,7 +40,10 @@ parameters:
   detect-event:
     type: boolean
     default: true
-    description: Automatically detects and uses the first event type in the workflow
+    description: >
+      Automatically detects and uses the first event type in the workflow. NOTE: Act's own CLI
+      default for --detect-event is false; this orb defaults to true. See the README's "Defaults
+      that deviate from Act" section.
   directory:
     type: string
     default: .
@@ -44,7 +51,29 @@ parameters:
   action-offline-mode:
     type: boolean
     default: true
-    description: Enable offline mode for actions (runs without fetching actions from remote sources)
+    description: >
+      Enable offline mode for actions (runs without fetching actions from remote sources). NOTE:
+      Act's own CLI default for --action-offline-mode is false; this orb defaults to true since
+      the actions cache (see `cache-actions`) is expected to already hold what was fetched on a
+      prior run. See the README's "Defaults that deviate from Act" section.
+  outputs:
+    type: string
+    default: ""
+    description: >
+      Comma-separated list of the wrapped GitHub Action's output keys (matching its
+      action.yml `outputs:`) to surface into $BASH_ENV, verbatim by name, so later native
+      CircleCI steps in the same job can read them as plain shell variables. Empty (the
+      default) means no outputs are collected -- fully off, zero behavior change for existing
+      callers. Requires `outputs-file` to be reachable both inside Act's container and on the
+      CircleCI host, which is only true when `bind` is enabled (the default) and the workflow
+      file is the one this orb generates (i.e. `skip-create-workflow-file` is not set).
+  outputs-file:
+    type: string
+    default: .act-orb-outputs.env
+    description: >
+      Filename (relative to `directory`) used to hand the wrapped action's outputs from inside
+      Act's container back to the CircleCI host. Only used when `outputs` is non-empty. This is
+      a transient file the orb creates and never commits.
   cache-actions:
     type: boolean
     default: true
@@ -63,12 +92,19 @@ parameters:
     description: Specifies a specific job ID to run
   pull:
     type: boolean
-    default: true
-    description: Forces pulling of Docker images even if already present
+    default: false
+    description: >
+      Forces pulling of Docker images even if already present. NOTE: Act's own CLI default for
+      --pull is true; this orb defaults to false (a deliberate deviation, chosen for CircleCI's
+      fresh-VM-per-job model where the image was likely just pulled/cached this run) to avoid
+      pulling on every single job. See the README's "Defaults that deviate from Act" section.
   rebuild:
     type: boolean
-    default: true
-    description: Rebuilds local Docker images even if already present
+    default: false
+    description: >
+      Rebuilds local Docker images even if already present. NOTE: Act's own CLI default for
+      --rebuild is true; this orb defaults to false for the same reason as `pull` above. See the
+      README's "Defaults that deviate from Act" section.
   remote-name:
     type: string
     default: origin
@@ -135,6 +171,15 @@ steps:
         ORB_VAL_VAR_FILE: <<parameters.var-file>>
         ORB_VAL_ADDITIONAL_ACT_FLAGS: <<parameters.additional-act-flags>>
       command: <<include(scripts/run-act.sh)>>
+  - when:
+      condition:
+        not:
+          equal: ["", << parameters.outputs >>]
+      steps:
+        - collect-outputs:
+            outputs: <<parameters.outputs>>
+            outputs-file: <<parameters.outputs-file>>
+            directory: <<parameters.directory>>
   - when:
       condition: << parameters.cache-actions >>
       steps:
