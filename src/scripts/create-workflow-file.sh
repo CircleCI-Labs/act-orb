@@ -146,7 +146,14 @@ fi
     fi
 } > "${ORB_VAL_WORKFLOW_FILE}"
 
-# Echo the workflow file for debugging
-echo -e "Generated workflow:\n$(cat "${ORB_VAL_WORKFLOW_FILE}")"
+# Echo the workflow file for debugging. Deliberately NOT `echo -e` here: -e
+# would re-interpret any literal backslash-escape sequences that are part of
+# the generated file's own content (e.g. the `\n` inside the output-capture
+# step's printf format strings, see above) as real escapes in this debug
+# printout, making the logged copy look different from what was actually
+# written to disk even though the file itself is correct.
+echo "Generated workflow:"
+cat "${ORB_VAL_WORKFLOW_FILE}"
 
-echo -e "\nGenerated workflow YAML file at ${ORB_VAL_WORKFLOW_FILE}"
+echo
+echo "Generated workflow YAML file at ${ORB_VAL_WORKFLOW_FILE}"
