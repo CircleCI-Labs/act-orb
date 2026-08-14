@@ -76,8 +76,6 @@ ACTION_STEP_ID="act-orb-main"
 id_line=""
 outputs_step=""
 if [ -n "${ORB_VAL_OUTPUTS:-}" ]; then
-    id_line="        id: ${ACTION_STEP_ID}"
-
     IFS=',' read -ra OUTPUT_KEYS <<< "${ORB_VAL_OUTPUTS}"
 
     env_lines=""
@@ -99,6 +97,7 @@ if [ -n "${ORB_VAL_OUTPUTS:-}" ]; then
     done
 
     if [ "${idx}" -gt 0 ]; then
+        id_line="        id: ${ACTION_STEP_ID}"
         outputs_step=$(
             cat << STEPEOF
       - name: Collect outputs for CircleCI (act-orb)
