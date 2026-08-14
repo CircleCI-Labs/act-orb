@@ -35,7 +35,7 @@ jobs:
             hello-world: "example-value"
           force-install: false
           debug: true
-  
+
 workflows:
   test-deploy:
     jobs:
@@ -54,7 +54,7 @@ workflows:
           executor:
             name: act/default
             image: android:2024.11.1
-            resource_class: medium 
+            resource_class: medium
             docker_layer_caching: true
           force-install: true
           debug: true
