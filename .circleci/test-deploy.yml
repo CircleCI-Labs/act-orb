@@ -163,6 +163,54 @@ jobs:
               exit 1
             fi
             echo "OK: github-token seam aliased correctly and did not leak the source var"
+  # Integration coverage for the GitHub Actions workflow compiler (ghac):
+  # compiles a real multi-job, needs:-chained GitHub workflow fixture into a
+  # CircleCI config, then validates that config against the real CLI --
+  # proving the setup-workflow half of the feature (act/gha-compile) end to
+  # end, not just that ghac's own unit tests pass in isolation.
+  test_gha_compile:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/02-needs-chain.yml
+          out: /tmp/generated-config.yml
+      - run:
+          name: Install CircleCI CLI
+          command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
+      - run:
+          name: Validate the generated config against the real CLI
+          command: circleci config validate --config /tmp/generated-config.yml
+  # Integration coverage for the per-job half (act/gha-render-job + act/act's
+  # existing skip-create-workflow-file escape hatch): renders one job out of
+  # a fixture GitHub workflow and actually executes it with a real `act`,
+  # proving the runtime path a gha-compile-generated pipeline's own jobs
+  # would follow -- not just that the rendered file happens to validate.
+  test_gha_render_and_run:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - setup_remote_docker
+      - act/gha-render-job:
+          workflow-file: test/gha-compile-fixture/sample-workflow.yml
+          job: hello
+          out: /tmp/rendered-job.yml
+      - run:
+          name: Sanity check the rendered file before handing it to act
+          command: |
+            if [ ! -s /tmp/rendered-job.yml ]; then
+              echo "Expected a non-empty rendered job file at /tmp/rendered-job.yml" >&2
+              exit 1
+            fi
+            grep -q "run: echo" /tmp/rendered-job.yml
+      - act/act:
+          skip-create-workflow-file: true
+          workflow-file: /tmp/rendered-job.yml
+          job: hello
+          force-install: false
+          debug: true
 
 workflows:
   test-deploy:
@@ -186,6 +234,12 @@ workflows:
           filters: *filters
       - test_github_token_seam:
           name: Testing github-token Seam
+          filters: *filters
+      - test_gha_compile:
+          name: Testing GHA Workflow Compiler (compile)
+          filters: *filters
+      - test_gha_render_and_run:
+          name: Testing GHA Workflow Compiler (render + run)
           filters: *filters
       - act/act:
           name: Testing Overriding Executor

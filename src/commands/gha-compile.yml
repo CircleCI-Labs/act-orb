@@ -1,0 +1,41 @@
+description: |
+  Compile a GitHub Actions workflow file into a CircleCI config, using the
+  `ghac` compiler (see tools/ghac/README.md and the main README's "GitHub
+  Actions workflow compiler" section for what it supports and what it
+  rejects by name). Intended for the one job in a `setup: true` pipeline:
+  install this command's output as the `configuration_path` of a
+  `continuation/continue` step (see `src/examples/compile_github_workflow.yml`
+  for a complete, runnable setup config). Each job the compiled config
+  produces is expected to call `gha-render-job` (below) followed by
+  `act/act` with `skip-create-workflow-file: true` -- this command does not
+  generate those per-job files itself, only the top-level config that wires
+  them together.
+
+  This command, `gha-render-job`, and `install-ghac` are new, independently
+  invoked entry points; using them has zero effect on `act/act`,
+  `run-act`, or any other existing command or job in this orb.
+
+parameters:
+  workflow-file:
+    type: string
+    default: ".github/workflows/ci.yml"
+    description: Path (relative to the checked-out repo) to the GitHub Actions workflow file to compile
+  out:
+    type: string
+    default: "/tmp/generated-config.yml"
+    description: Path to write the generated CircleCI config to
+  bin-dir:
+    type: string
+    default: "/home/circleci/bin"
+    description: The directory where ghac should be installed
+
+steps:
+  - install-ghac:
+      bin-dir: <<parameters.bin-dir>>
+  - run:
+      name: "ghac compile: << parameters.workflow-file >>"
+      environment:
+        ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
+        ORB_VAL_OUT: <<parameters.out>>
+        ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
+      command: <<include(scripts/gha-compile.sh)>>
