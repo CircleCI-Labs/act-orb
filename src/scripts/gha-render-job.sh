@@ -32,7 +32,8 @@ echo "Rendering job '${ORB_VAL_JOB}' from ${ORB_VAL_WORKFLOW_FILE} -> ${ORB_VAL_
     --in "${ORB_VAL_WORKFLOW_FILE}" \
     --source-path "${ORB_VAL_WORKFLOW_FILE}" \
     --job "${ORB_VAL_JOB}" \
-    --out "${ORB_VAL_OUT}"
+    --out "${ORB_VAL_OUT}" \
+    --self-hosted-namespace "${ORB_VAL_SELF_HOSTED_NAMESPACE}"
 
 echo "Rendered single-job workflow file at ${ORB_VAL_OUT}:"
 cat "${ORB_VAL_OUT}"

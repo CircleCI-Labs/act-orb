@@ -211,6 +211,56 @@ jobs:
           job: hello
           force-install: false
           debug: true
+  # Integration coverage for strategy.matrix -> CircleCI matrix (added for
+  # family parity with buildkite-gha): compiles a 2x2 matrix fixture and
+  # asserts the generated config contains a real matrix: stanza, then
+  # validates it against the real CLI end to end -- proving the compiler
+  # output is actually acceptable CircleCI config, not just well-formed YAML.
+  test_gha_compile_matrix:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/08-matrix-2x2.yml
+          out: /tmp/generated-matrix-config.yml
+      - run:
+          name: "Sanity check the matrix: stanza is actually present"
+          command: |
+            grep -q "matrix:" /tmp/generated-matrix-config.yml
+            grep -q "parameters:" /tmp/generated-matrix-config.yml
+      - run:
+          name: Install CircleCI CLI
+          command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
+      - run:
+          name: Validate the generated matrix config against the real CLI
+          command: circleci config validate --config /tmp/generated-matrix-config.yml
+  # Integration coverage for runs-on: self-hosted -> CircleCI self-hosted
+  # runner resource classes (added for family parity). Deliberately does NOT
+  # run `circleci config validate` here: the generated config's own
+  # `act/gha-render-job` step passes --self-hosted-namespace, a command
+  # parameter that only exists once THIS branch's own `Publish Dev` step
+  # (later in this same workflow) has republished cci-labs/act@dev:... --
+  # validating that against the registry here would be a same-run
+  # chicken-and-egg failure on the very first run after this parameter was
+  # added. Asserting the compiled resource_class/machine shape by grepping
+  # gha-compile's own output still proves the --self-hosted-namespace flag
+  # round-trips correctly through the orb command -> script -> ghac binary
+  # in a real CircleCI job.
+  test_gha_compile_self_hosted:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/11-self-hosted-runner.yml
+          out: /tmp/generated-self-hosted-config.yml
+          self-hosted-namespace: acme
+      - run:
+          name: Sanity check the self-hosted resource_class/machine shape
+          command: |
+            grep -q "machine: true" /tmp/generated-self-hosted-config.yml
+            grep -q "resource_class: acme/linux-x64" /tmp/generated-self-hosted-config.yml
 
 workflows:
   test-deploy:
@@ -240,6 +290,12 @@ workflows:
           filters: *filters
       - test_gha_render_and_run:
           name: Testing GHA Workflow Compiler (render + run)
+          filters: *filters
+      - test_gha_compile_matrix:
+          name: Testing GHA Workflow Compiler (matrix)
+          filters: *filters
+      - test_gha_compile_self_hosted:
+          name: Testing GHA Workflow Compiler (self-hosted runner)
           filters: *filters
       - act/act:
           name: Testing Overriding Executor

@@ -1,0 +1,17 @@
+# GitHub's self-hosted-runner convention: "self-hosted" plus extra labels
+# describing the machine (here linux/x64). Maps to a CircleCI self-hosted
+# runner resource class -- `machine: true` + `resource_class:
+# <namespace>/<labels>` -- once a runner namespace is configured (see
+# internal/compile/runson.go's ResolveSelfHostedRunsOn and
+# --self-hosted-namespace). Compiling this fixture requires that flag; see
+# test/run_tests.sh.
+name: self-hosted-runner
+on: [push]
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: echo "Running on a CircleCI self-hosted runner"

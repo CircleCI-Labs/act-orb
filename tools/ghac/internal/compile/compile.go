@@ -35,6 +35,25 @@ type Job struct {
 	Filter      *BranchFilter
 	Outputs     map[string]string // output name -> raw "${{ steps.X.outputs.Y }}" expression
 	NeedsUsed   []NeedsOutputRef  // needs.*.outputs.* refs found in this job's own steps
+	Matrix      *MatrixSpec       // non-nil if this job has a strategy.matrix
+}
+
+// requirableNames returns the CircleCI job-invocation name(s) a downstream
+// job's `requires:` must list to depend on all of j. For a plain job that's
+// just its own id; for a matrix job it's the matrix alias (defaults to the
+// job id — see "Dependencies and matrix jobs" in the configuration
+// reference) PLUS every include-added discrete job invocation render.go
+// generates alongside the matrix, since those live outside the matrix's own
+// alias group and would otherwise be silently un-required.
+func (j *Job) requirableNames() []string {
+	if j.Matrix == nil || len(j.Matrix.Include) == 0 {
+		return []string{j.ID}
+	}
+	out := []string{j.ID}
+	for _, combo := range j.Matrix.Include {
+		out = append(out, includeJobName(j.ID, j.Matrix.Keys, combo))
+	}
+	return out
 }
 
 // Result is everything the compiler produced from one workflow file.
@@ -103,10 +122,9 @@ func Compile(workflowYAML []byte, sourcePath string) (*Result, error) {
 			return nil, fmt.Errorf("job %q: expected a mapping", id)
 		}
 
-		for _, forbidden := range []string{"strategy", "services", "uses", "permissions", "concurrency", "environment"} {
+		for _, forbidden := range []string{"services", "uses", "permissions", "concurrency", "environment"} {
 			if mapGet(jn, forbidden) != nil {
 				reason := map[string]string{
-					"strategy":    "matrix builds (strategy:) are out of MVP scope — each matrix cell would need its own CircleCI job with its own act/act invocation and its own needs/outputs wiring, none of which this compiler does yet",
 					"services":    "job-level services: containers are out of MVP scope — CircleCI's own docker-executor sidecar model or a manual service container in the act/act step would both need explicit wiring",
 					"uses":        "this job calls a reusable workflow (uses:) — out of MVP scope, and a fundamentally different compile shape (the callee's jobs would need compiling too)",
 					"permissions": "job-level permissions: is out of MVP scope",
@@ -117,16 +135,58 @@ func Compile(workflowYAML []byte, sourcePath string) (*Result, error) {
 			}
 		}
 
+		matrixSpec, err := parseStrategy(jn, id)
+		if err != nil {
+			return nil, unsupported("%s", err)
+		}
+
 		runsOnNode := mapGet(jn, "runs-on")
 		if runsOnNode == nil {
 			return nil, fmt.Errorf("job %q: missing runs-on:", id)
 		}
-		if runsOnNode.Kind != yaml.ScalarNode {
-			return nil, unsupported("job %q: runs-on: must be a single string label; runs-on: lists (e.g. [self-hosted, linux, x64]) are out of MVP scope", id)
+		var exec RunsOnTarget
+		var runsOnLabel string
+		switch runsOnNode.Kind {
+		case yaml.ScalarNode:
+			runsOnLabel = runsOnNode.Value
+			if strings.Contains(runsOnLabel, "${{") && strings.Contains(runsOnLabel, "matrix.") {
+				return nil, unsupported(
+					"job %q: runs-on driven by a matrix expression (%q) is out of MVP scope — this "+
+						"compiler requires a fixed runs-on label even when strategy.matrix is used "+
+						"elsewhere in the job", id, runsOnLabel)
+			}
+			if runsOnLabel == "self-hosted" {
+				exec, err = ResolveSelfHostedRunsOn([]string{"self-hosted"})
+			} else {
+				exec, err = ResolveRunsOn(runsOnLabel)
+			}
+			if err != nil {
+				return nil, unsupported("job %q: %s", id, err)
+			}
+		case yaml.SequenceNode:
+			labels := stringList(runsOnNode)
+			for _, l := range labels {
+				if strings.Contains(l, "matrix.") {
+					return nil, unsupported(
+						"job %q: runs-on driven by a matrix expression (%v) is out of MVP scope — this "+
+							"compiler requires fixed runs-on labels even when strategy.matrix is used "+
+							"elsewhere in the job", id, labels)
+				}
+			}
+			runsOnLabel = strings.Join(labels, ",")
+			exec, err = ResolveSelfHostedRunsOn(labels)
+			if err != nil {
+				return nil, unsupported("job %q: %s", id, err)
+			}
+		default:
+			return nil, unsupported("job %q: runs-on: must be a single string label or a list of labels", id)
 		}
-		exec, err := ResolveRunsOn(runsOnNode.Value)
-		if err != nil {
-			return nil, unsupported("job %q: %s", id, err)
+
+		if matrixSpec != nil && mapGet(jn, "outputs") != nil {
+			return nil, unsupported(
+				"job %q: strategy.matrix combined with outputs: is out of MVP scope — GitHub itself only "+
+					"exposes the LAST matrix cell to finish for needs.%s.outputs.*, an ordering-dependent "+
+					"result this compiler won't reproduce", id, id)
 		}
 
 		needs := stringList(mapGet(jn, "needs"))
@@ -167,11 +227,12 @@ func Compile(workflowYAML []byte, sourcePath string) (*Result, error) {
 		j := &Job{
 			ID:          id,
 			Node:        deepCopy(jn),
-			RunsOnLabel: runsOnNode.Value,
+			RunsOnLabel: runsOnLabel,
 			Executor:    exec,
 			Needs:       needs,
 			Filter:      filter,
 			Outputs:     outputs,
+			Matrix:      matrixSpec,
 		}
 		jobs = append(jobs, j)
 		byID[id] = j
@@ -198,6 +259,26 @@ func Compile(workflowYAML []byte, sourcePath string) (*Result, error) {
 			refs = append(refs, envRefs...)
 		}
 		j.NeedsUsed = dedupeRefs(refs)
+
+		// matrix.* scan + rewrite (same textual-rewrite discipline as
+		// needs.*.outputs.* above — see matrix.go). declaredMatrix is empty
+		// for a non-matrix job, so any matrix.* reference there is
+		// correctly reported as undeclared rather than silently ignored.
+		declaredMatrix := map[string]bool{}
+		if j.Matrix != nil {
+			for _, k := range j.Matrix.Keys {
+				declaredMatrix[k] = true
+			}
+		}
+		if _, err := rewriteMatrixRefs(stepsNode, declaredMatrix); err != nil {
+			return nil, unsupported("job %q: %s", j.ID, err)
+		}
+		if envNode := mapGet(j.Node, "env"); envNode != nil {
+			if _, err := rewriteMatrixRefs(envNode, declaredMatrix); err != nil {
+				return nil, unsupported("job %q: %s", j.ID, err)
+			}
+		}
+
 		for _, r := range j.NeedsUsed {
 			up, ok := byID[r.Job]
 			if !ok {
@@ -285,6 +366,13 @@ func buildPerJobWorkflowDoc(name, on *yaml.Node, j *Job) *yaml.Node {
 	jobNode := deepCopy(j.Node)
 	mapDelete(jobNode, "needs")
 	mapDelete(jobNode, "if")
+	// strategy: is stripped for the same reason needs: is: act's planner
+	// would otherwise try to run the whole matrix itself inside this one
+	// invocation. CircleCI's own matrix: (render.go) already picked exactly
+	// one cell for this job to run; the matrix.* values for that cell reach
+	// act as plain env vars (rewriteMatrixRefs above), not as GitHub's own
+	// matrix context.
+	mapDelete(jobNode, "strategy")
 
 	if len(j.Outputs) > 0 {
 		appendOutputCaptureStep(jobNode, j)

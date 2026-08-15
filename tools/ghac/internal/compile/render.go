@@ -38,8 +38,12 @@ func buildCircleCIConfig(jobs []*Job) (string, error) {
 	b.line(0, "workflows:")
 	b.line(1, "generated-from-github-workflow:")
 	b.line(2, "jobs:")
+	byID := map[string]*Job{}
 	for _, j := range jobs {
-		renderWorkflowJobEntry(&b, j)
+		byID[j.ID] = j
+	}
+	for _, j := range jobs {
+		renderWorkflowJobEntry(&b, j, byID)
 	}
 
 	return b.String(), nil
@@ -47,9 +51,33 @@ func buildCircleCIConfig(jobs []*Job) (string, error) {
 
 func renderJob(b *indentBuf, j *Job) {
 	b.line(1, "%s:", j.ID)
-	b.line(2, "machine:")
-	b.line(3, "image: %s", j.Executor.MachineImage)
+	if j.Matrix != nil {
+		b.line(2, "parameters:")
+		for _, k := range j.Matrix.Keys {
+			b.line(3, "%s:", k)
+			b.line(4, "type: string")
+		}
+	}
+	if j.Executor.SelfHosted {
+		b.line(2, "machine: true")
+	} else {
+		b.line(2, "machine:")
+		b.line(3, "image: %s", j.Executor.MachineImage)
+	}
 	b.line(2, "resource_class: %s", j.Executor.ResourceClass)
+	if j.Matrix != nil {
+		// Threads each matrix cell's parameter values into this job's own
+		// process environment (available to every step, including the
+		// render-job and act/act steps below) as CCI_MATRIX_<KEY> — the
+		// runtime half of rewriteMatrixRefs' compile-time textual rewrite
+		// (matrix.go). << parameters.<key> >> is substituted by CircleCI's
+		// own config expansion before the job ever runs, so this is a
+		// literal value by the time any step reads it — no shell splicing.
+		b.line(2, "environment:")
+		for _, k := range j.Matrix.Keys {
+			b.line(3, "%s: << parameters.%s >>", matrixEnvVarFor(k), k)
+		}
+	}
 	b.line(2, "steps:")
 	// NOTE on indentation: a YAML block-sequence item that opens its own
 	// mapping shorthand ("- key:") requires any SIBLING keys nested under
@@ -81,6 +109,14 @@ func renderJob(b *indentBuf, j *Job) {
 	b.line(5, "workflow-file: %s", sourceWorkflowRelPath)
 	b.line(5, "job: %s", j.ID)
 	b.line(5, "out: /tmp/act-workflows/%s.yml", j.ID)
+	if selfHostedNamespace != "" {
+		// Must match the value gha-compile itself was given (see
+		// gha-compile.yml's description of this parameter) — Compile()
+		// validates the whole source workflow on every render-job call, not
+		// just job j, so this has to be right even for a job that isn't
+		// itself self-hosted.
+		b.line(5, "self-hosted-namespace: %s", selfHostedNamespace)
+	}
 
 	b.line(3, "- act/act:")
 	b.line(5, "skip-create-workflow-file: true")
@@ -101,41 +137,137 @@ func renderJob(b *indentBuf, j *Job) {
 	}
 }
 
-func renderWorkflowJobEntry(b *indentBuf, j *Job) {
-	needRequires := len(j.Needs) > 0
+// renderWorkflowJobEntry emits the workflow-level job invocation(s) for j:
+// the main entry (a plain job invocation, or — for a matrix job — a real
+// CircleCI `matrix:` invocation cross-producting j.Matrix.Keys/Values with
+// j.Matrix.Exclude already fully expanded into exact combinations to
+// remove, see matrix.go), plus one additional explicit, non-matrix
+// invocation per j.Matrix.Include entry (each include-added combination
+// gets its own discrete job invocation calling the same parameterized job
+// with literal parameter values instead of a matrix: block — see
+// includeJobName and requirableNames in compile.go for how downstream
+// requires: finds these too).
+func renderWorkflowJobEntry(b *indentBuf, j *Job, byID map[string]*Job) {
+	requires := expandRequires(j.Needs, byID)
+	needRequires := len(requires) > 0
 	needFilters := j.Filter != nil
-	if !needRequires && !needFilters {
+	needMatrix := j.Matrix != nil
+
+	if !needRequires && !needFilters && !needMatrix {
 		b.line(3, "- %s", j.ID)
 		return
 	}
+
+	if needMatrix {
+		b.line(3, "# strategy.fail-fast/max-parallel note: CircleCI runs every matrix cell to")
+		b.line(3, "# completion independently -- it does not cancel sibling matrix jobs on a")
+		b.line(3, "# failure the way GitHub's fail-fast: true (the default) does.")
+	}
 	b.line(3, "- %s:", j.ID)
+	if needMatrix {
+		b.line(5, "matrix:")
+		b.line(6, "parameters:")
+		for _, k := range j.Matrix.Keys {
+			b.line(7, "%s:", k)
+			for _, v := range j.Matrix.Values[k] {
+				b.line(8, "- %q", v)
+			}
+		}
+		if len(j.Matrix.Exclude) > 0 {
+			b.line(6, "exclude:")
+			for _, combo := range j.Matrix.Exclude {
+				// Same dash-with-nested-keys indentation rule as elsewhere
+				// in this file (see the NOTE in renderJob's caller below):
+				// the dash line is at depth 7, so its OTHER keys must sit
+				// at depth 9 (d+2), not 8 — depth 8 would land back at the
+				// same column as the first key and get silently reparsed
+				// as a second, unrelated mapping key.
+				first := true
+				for _, k := range j.Matrix.Keys {
+					if first {
+						b.line(7, "- %s: %q", k, combo[k])
+						first = false
+					} else {
+						b.line(9, "%s: %q", k, combo[k])
+					}
+				}
+			}
+		}
+	}
 	if needRequires {
 		b.line(5, "requires:")
-		for _, n := range j.Needs {
+		for _, n := range requires {
 			b.line(6, "- %s", n)
 		}
 	}
-	if needFilters {
-		b.line(5, "filters:")
-		if len(j.Filter.BranchesOnly) > 0 || j.Filter.ExcludeAllBranches {
-			b.line(6, "branches:")
-			if len(j.Filter.BranchesOnly) > 0 {
-				b.line(7, "only:")
-				for _, x := range j.Filter.BranchesOnly {
-					b.line(8, "- %s", x)
-				}
-			} else {
-				b.line(7, "ignore: /.*/")
+	renderFilters(b, j.Filter)
+
+	for _, combo := range j.Matrix.include() {
+		name := includeJobName(j.ID, j.Matrix.Keys, combo)
+		b.line(3, "- %s:", j.ID)
+		b.line(5, "name: %s", name)
+		for _, k := range j.Matrix.Keys {
+			b.line(5, "%s: %q", k, combo[k])
+		}
+		if needRequires {
+			b.line(5, "requires:")
+			for _, n := range requires {
+				b.line(6, "- %s", n)
 			}
 		}
-		if len(j.Filter.TagsOnly) > 0 {
-			b.line(6, "tags:")
+		renderFilters(b, j.Filter)
+	}
+}
+
+// include is a nil-safe accessor so the range in renderWorkflowJobEntry
+// doesn't need a separate "if j.Matrix != nil" guard.
+func (m *MatrixSpec) include() []map[string]string {
+	if m == nil {
+		return nil
+	}
+	return m.Include
+}
+
+func renderFilters(b *indentBuf, f *BranchFilter) {
+	if f == nil {
+		return
+	}
+	b.line(5, "filters:")
+	if len(f.BranchesOnly) > 0 || f.ExcludeAllBranches {
+		b.line(6, "branches:")
+		if len(f.BranchesOnly) > 0 {
 			b.line(7, "only:")
-			for _, x := range j.Filter.TagsOnly {
+			for _, x := range f.BranchesOnly {
 				b.line(8, "- %s", x)
 			}
+		} else {
+			b.line(7, "ignore: /.*/")
 		}
 	}
+	if len(f.TagsOnly) > 0 {
+		b.line(6, "tags:")
+		b.line(7, "only:")
+		for _, x := range f.TagsOnly {
+			b.line(8, "- %s", x)
+		}
+	}
+}
+
+// expandRequires turns a job's GitHub `needs:` list into the full set of
+// CircleCI job-invocation names a `requires:` block must list — normally
+// just the upstream job's own id, but see (*Job).requirableNames for why a
+// matrix-with-include upstream job needs its include-added discrete job
+// names listed too.
+func expandRequires(needs []string, byID map[string]*Job) []string {
+	var out []string
+	for _, n := range needs {
+		if up, ok := byID[n]; ok {
+			out = append(out, up.requirableNames()...)
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 func upstreamJobsUsed(j *Job) []string {

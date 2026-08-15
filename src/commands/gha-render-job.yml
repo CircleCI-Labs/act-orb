@@ -27,6 +27,16 @@ parameters:
     type: string
     default: "/home/circleci/bin"
     description: The directory where ghac should be installed
+  self-hosted-namespace:
+    type: string
+    default: ""
+    description: >
+      Must match whatever value was passed to `gha-compile` for this same
+      workflow file, if any -- `ghac` validates the whole file on every
+      invocation regardless of which one job you're rendering, so a
+      workflow using runs-on: self-hosted anywhere needs this set the same
+      way for every job, not only the self-hosted ones. See `gha-compile`'s
+      description of this same parameter.
 
 steps:
   - install-ghac:
@@ -38,4 +48,5 @@ steps:
         ORB_VAL_JOB: <<parameters.job>>
         ORB_VAL_OUT: <<parameters.out>>
         ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
+        ORB_VAL_SELF_HOSTED_NAMESPACE: <<parameters.self-hosted-namespace>>
       command: <<include(scripts/gha-render-job.sh)>>

@@ -24,7 +24,8 @@ echo "Compiling ${ORB_VAL_WORKFLOW_FILE} -> ${ORB_VAL_OUT}"
 "${GHAC_BIN}" compile \
     --in "${ORB_VAL_WORKFLOW_FILE}" \
     --source-path "${ORB_VAL_WORKFLOW_FILE}" \
-    --out "${ORB_VAL_OUT}"
+    --out "${ORB_VAL_OUT}" \
+    --self-hosted-namespace "${ORB_VAL_SELF_HOSTED_NAMESPACE}"
 
 echo "Generated CircleCI config at ${ORB_VAL_OUT}:"
 cat "${ORB_VAL_OUT}"

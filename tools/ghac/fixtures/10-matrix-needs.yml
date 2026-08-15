@@ -1,0 +1,26 @@
+# A matrix job with no include/exclude, required by a plain downstream
+# job. deploy's `requires: [build]` must reference the matrix's own alias
+# (defaulting to the job id "build" -- see "Dependencies and matrix jobs" in
+# CircleCI's configuration reference), which requires ALL matrix cells to
+# finish before deploy runs.
+name: matrix-needs
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: ["1", "2"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: echo "Building version ${{ matrix.version }}"
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        run: echo "Deploying after all build matrix cells finished"

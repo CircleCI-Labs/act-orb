@@ -28,6 +28,21 @@ parameters:
     type: string
     default: "/home/circleci/bin"
     description: The directory where ghac should be installed
+  self-hosted-namespace:
+    type: string
+    default: ""
+    description: >
+      Only needed if the workflow uses `runs-on: self-hosted` (bare, or with
+      extra labels like `[self-hosted, linux, x64]`) anywhere. Your CircleCI
+      runner namespace -- self-hosted runs-on compiles to
+      `resource_class: <this>/<labels-minus-self-hosted-and-linux, sorted,
+      dash-joined>` (or `<this>/self-hosted` for bare self-hosted); see
+      tools/ghac/README.md and internal/compile/runson.go's
+      ResolveSelfHostedRunsOn for the exact naming convention your
+      organization's runner resource classes need to follow. Left empty,
+      any self-hosted runs-on in the workflow is a compile error naming why.
+      If used, `gha-render-job` (below) must be called with the SAME value
+      for every job in this workflow, not just the self-hosted ones.
 
 steps:
   - install-ghac:
@@ -38,4 +53,5 @@ steps:
         ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
         ORB_VAL_OUT: <<parameters.out>>
         ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
+        ORB_VAL_SELF_HOSTED_NAMESPACE: <<parameters.self-hosted-namespace>>
       command: <<include(scripts/gha-compile.sh)>>

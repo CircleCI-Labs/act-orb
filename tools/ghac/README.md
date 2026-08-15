@@ -6,13 +6,28 @@ commands (see `../src/commands/`).
 
 ## Provenance
 
-Copied verbatim (unmodified) from the working prototype at
-`gha-capability-spikes/workflow-compiler`, commit `a8df007` ("Tidy and land
-four ecosystem-bridge GHA capability spikes"). That repo's own README has
-the full design writeup, the fixture-by-fixture proof against the real
-CircleCI CLI, and the honest limits table this orb's README section
-(see the top-level `README.md`, "GitHub Actions workflow compiler") is a
-condensed version of.
+Originally copied from the working prototype at `gha-capability-spikes/workflow-compiler`, commit
+`a8df007` ("Tidy and land four ecosystem-bridge GHA capability spikes") -- but it was **not** kept
+verbatim/unmodified after that copy, and this note previously (incorrectly) said it was. Two rounds
+of real changes have landed here since:
+
+1. `render.go`'s per-job "install ghac" step was rewritten to emit an `act/gha-render-job` orb-command
+   step instead of a raw `curl` against a GitHub Releases URL that was never actually cut for this
+   prototype (`ghac_linux_amd64` at a nonexistent org/release) -- see git history
+   (`a1c610e`, "ghac: emit act/gha-render-job orb-command steps, not a raw curl placeholder").
+   `actOrbVersion` was likewise repointed at this branch's own dev tag
+   (`cci-labs/act@dev:upgrade-bridge-family-parity`) rather than a stable version, since
+   `act/gha-render-job` doesn't exist in any published stable release yet.
+2. `strategy.matrix` -> CircleCI `matrix:` and `runs-on: self-hosted` -> CircleCI self-hosted runner
+   support (matrix.go, runson.go's `ResolveSelfHostedRunsOn`, and the corresponding changes to
+   compile.go/render.go/cmd/ghac) were added here first and have been ported back to the prototype --
+   see that repo's own README for its current sync status with this copy.
+
+The prototype's own README has the full original design writeup, the fixture-by-fixture proof
+against the real CircleCI CLI, and the honest limits table this orb's README section (see the
+top-level `README.md`, "GitHub Actions workflow compiler") is a condensed version of. Treat THIS
+copy (`tools/ghac/`) as the source of truth for anything that has landed on this branch, though --
+it's what's actually built into the shipped binary and exercised by `.circleci/test-deploy.yml`.
 
 ## Why source AND a prebuilt binary are both committed
 

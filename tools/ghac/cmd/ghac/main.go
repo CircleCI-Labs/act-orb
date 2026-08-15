@@ -1,10 +1,10 @@
 // ghac is the workflow-compiler prototype's CLI. Two subcommands:
 //
-//	ghac compile --in <workflow.yml> [--out <config.yml>] [--source-path <repo-relative path>]
+//	ghac compile --in <workflow.yml> [--out <config.yml>] [--source-path <repo-relative path>] [--self-hosted-namespace <ns>]
 //	    Validates the whole workflow and emits the CircleCI config.yml a
 //	    setup job would submit via the continuation API.
 //
-//	ghac render-job --in <workflow.yml> --job <id> [--out <file>] [--source-path <repo-relative path>]
+//	ghac render-job --in <workflow.yml> --job <id> [--out <file>] [--source-path <repo-relative path>] [--self-hosted-namespace <ns>]
 //	    Re-derives one job's rewritten, needs-stripped workflow file. Called
 //	    from *inside* a real (continued) CircleCI job, at runtime, against
 //	    the same checked-out source file — see render.go for why this
@@ -12,6 +12,12 @@
 //
 // Both subcommands run the identical validation; render-job additionally
 // requires that --job name a job that actually exists in the file.
+// --self-hosted-namespace only matters if the workflow uses runs-on:
+// self-hosted anywhere — see internal/compile/runson.go's
+// ResolveSelfHostedRunsOn — but must be passed IDENTICALLY to every
+// render-job call for a workflow that uses it anywhere, since Compile
+// validates the whole file up front regardless of which one job you asked
+// to render.
 package main
 
 import (
@@ -52,6 +58,7 @@ func cmdCompile(args []string) {
 	fs := parseFlags(args, "compile")
 	data := readIn(fs.in)
 	compile.SetSourceWorkflowRelPath(fs.sourcePath)
+	compile.SetSelfHostedNamespace(fs.selfHostedNamespace)
 	res, err := compile.Compile(data, fs.in)
 	fail(err)
 	writeOut(fs.out, res.ConfigYAML)
@@ -65,6 +72,7 @@ func cmdRenderJob(args []string) {
 	}
 	data := readIn(fs.in)
 	compile.SetSourceWorkflowRelPath(fs.sourcePath)
+	compile.SetSelfHostedNamespace(fs.selfHostedNamespace)
 	res, err := compile.Compile(data, fs.in)
 	fail(err)
 	key := "generated/" + fs.job + ".yml"
@@ -77,7 +85,7 @@ func cmdRenderJob(args []string) {
 }
 
 type flags struct {
-	in, out, job, sourcePath string
+	in, out, job, sourcePath, selfHostedNamespace string
 }
 
 func parseFlags(args []string, subcmd string) flags {
@@ -96,6 +104,9 @@ func parseFlags(args []string, subcmd string) flags {
 		case "--source-path":
 			i++
 			f.sourcePath = args[i]
+		case "--self-hosted-namespace":
+			i++
+			f.selfHostedNamespace = args[i]
 		default:
 			fmt.Fprintf(os.Stderr, "ghac %s: unknown flag %q\n", subcmd, args[i])
 			os.Exit(2)
