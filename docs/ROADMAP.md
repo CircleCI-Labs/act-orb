@@ -7,7 +7,81 @@ living only in a chat transcript or a PR description that ages out.
 None of the items below are secretly half-built. If you pick one up, treat this as the starting
 brief, not a patch to apply.
 
-## 1. Actions-cache-service shim (`ACTIONS_CACHE_URL`/`ACTIONS_RESULTS_URL`)
+## 1. Actions-cache-service shim (`ACTIONS_CACHE_URL`/`ACTIONS_RESULTS_URL`) -- STATUS UPDATE (2026-08): built, protocol proven, save-persistence gap real and documented
+
+This item was picked up in a later pass (family-parity work vs. `buildkite-gha`). What follows is
+that pass's own record, kept alongside the original entry above for history.
+
+**What shipped:** `act/cache-shim` (`src/commands/cache-shim.yml`, `src/scripts/
+cache_shim_server.py` + `cache-shim-start.sh`) -- a real, ~500-line Twirp-protocol
+translation server, not a stub. It implements `CreateCacheEntry`/`FinalizeCacheEntryUpload`/
+`GetCacheEntryDownloadURL`, the real Azure block-blob chunked-upload wire format (including
+correct reassembly of out-of-order blocks, verified with `uploadConcurrency`-style concurrent
+sends in `test/cache-shim/run_tests.py`), and the same wide-bind-plus-per-job-token security
+posture `act/oidc-shim` was fixed to have after its own security review. See the README's
+[Actions cache shim](../README.md#actions-cache-shim) section for the full design.
+
+**What is proven, with evidence, and what is not:**
+- Twirp negotiation, auth enforcement, and block reassembly: proven, both locally (18/18 in
+  `test/cache-shim/run_tests.py` against a correct fake backend) and against the real CircleCI
+  runner API in this orb's own CI (`test_cache_shim`).
+- A durable, cross-run cache **hit**: **not proven.** `$runner_host/api/v2/output/cache-save`
+  returns a `{"method","location","tags"}` ticket, not a presigned URL, and every construction of
+  an actual upload target from that ticket 404s when tried from a real job -- tested exhaustively
+  (bare location, every plausible path-prefix combination, the older now-dead
+  `/api/v2/task/storage/cache-save` endpoint, an inline-content field, generic upload-endpoint
+  guesses, `OPTIONS` probing) across many separate real pipeline runs. See the README's "The
+  known, real gap" subsection for the complete, reproduced evidence trail. The working hypothesis:
+  a plain job's task-token scope is metadata-only for this endpoint; the real object-storage
+  channel belongs to CircleCI's own runner-agent process, not something a job step can reach.
+
+**Why this wasn't fully closed this pass:** the mission that produced this shim was told
+`circleci/task-agent-subcommand-cache` already does this successfully for Bazel/Gradle/Turborepo
+caching -- but that repo's source was not reachable from the sandbox this work was done in.
+Reading it is very likely the fastest path to the actual answer (the correct way to redeem a
+`cache-save` ticket, or the actual endpoint/channel real cache bytes move through) -- faster than
+more trial-and-error probing against production.
+
+**If someone picks this up:** read `task-agent-subcommand-cache`'s own upload-redemption code
+first. If it truly uses `/api/v2/output/cache-save` the same way this shim does, the missing piece
+is almost certainly either (a) a header/field this pass didn't try, or (b) evidence the real
+channel is not public HTTP at all, in which case the honest scope of this shim is "restore-only,
+formally" and the README should say so even more plainly than it already does.
+
+## 2. Artifact-service shim (native `store_artifacts` interception) -- STATUS UPDATE (2026-08): built, much smaller than originally scoped
+
+**What shipped:** `run-act`'s new `artifact-server-path`/`artifact-server-addr`/
+`artifact-server-port` parameters (all off by default), which just pass through to flags Act's
+own CLI *already has*. Investigating this surfaced that the original premise below --
+"requires an independent protocol implementation" -- was wrong: **Act already ships a complete,
+working implementation of GitHub's real artifact-v4 protocol** (`pkg/artifacts` in `nektos/act`'s
+own source -- the real Twirp `ArtifactService` routes, storing to local disk), gated behind a
+single `--artifact-server-path` flag this orb simply never passed. Once set, Act's own runner
+(`pkg/runner/run_context.go`) automatically injects `ACTIONS_RUNTIME_URL`/`ACTIONS_RESULTS_URL`/
+`ACTIONS_RUNTIME_TOKEN` into the wrapped action's container -- no shim, no protocol translation,
+no orb-side server. See the README's [Artifacts](../README.md#artifacts) section.
+
+**What's proven:** `test_artifacts` in `.circleci/test-deploy.yml` runs a real
+`actions/upload-artifact@v4` through `act/act` with this flag set and asserts the file lands on
+the CircleCI host's disk, then hands it to a real `store_artifacts` step -- end to end, for real,
+not simulated.
+
+**What's still true from the original scoping below, unchanged:** `upload-artifact@v4` still
+fails outright inside `container:`-scoped jobs
+([nektos/act#2508](https://github.com/nektos/act/issues/2508), still open) because the job's
+container image has no Node in it. This is an upstream Act limitation; enabling Act's own
+artifact server does nothing for that case, exactly as anticipated when this item was first
+scoped (see the original entry immediately below, kept for history).
+
+**If someone picks this up:** the remaining gap is entirely upstream (nektos/act#2508), not
+something an orb-side change can address. `persist_to_workspace` on the same
+`artifact-server-path` directory is the natural next addition if cross-job artifact flow (rather
+than just landing in the CircleCI artifacts UI) turns out to matter for real usage.
+
+---
+
+**Original scoping (kept for history -- see the STATUS UPDATE above each for what actually
+shipped and what didn't):**
 
 **What it would do:** let `actions/cache@v4` (and the dozens of `setup-*` actions with built-in
 caching) inside a wrapped action actually persist across CircleCI runs, instead of getting Act's
@@ -37,8 +111,6 @@ orb. Minimum shape: a small always-running local HTTP server (could run as a bac
 this orb, started before `run-act` and stopped after), a translation layer for the subset of the
 cache-service protocol `actions/cache` actually uses in practice, and wiring
 `ACTIONS_CACHE_URL`/`ACTIONS_RUNTIME_TOKEN` into the env-file before Act starts.
-
-## 2. Artifact-service shim (native `store_artifacts` interception)
 
 **What it would do:** let `actions/upload-artifact`/`download-artifact` inside a wrapped action
 land in CircleCI's own artifacts UI instead of vanishing when the ephemeral VM exits.

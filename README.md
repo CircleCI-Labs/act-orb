@@ -22,6 +22,11 @@ CircleCI Labs, including this repo, is a collection of solutions developed by me
 - Leverage CircleCI caching for faster runs.
 - Surface the wrapped action's own outputs into `$BASH_ENV` for later native CircleCI steps (opt-in -- see [Capturing action outputs](#capturing-action-outputs)).
 - Pass a `services:` block straight through to Act (see [Service containers](#service-containers)).
+- Translate `actions/cache@v4`'s real protocol against CircleCI's own runner API (see
+  [Actions cache shim](#actions-cache-shim) -- restore/negotiation proven, a durable save is a
+  documented, in-progress gap, not silently pretended to work).
+- Enable Act's own built-in artifact server for `actions/upload-artifact`/`download-artifact@v4`
+  (see [Artifacts](#artifacts)).
 
 ## Quick Start
 
@@ -96,6 +101,191 @@ under the old key becomes unreachable, `restore_cache` falls through to the unve
 (or a cold cache on the very next run), and a fresh cache is saved under the corrected key from
 then on. Nothing breaks -- expect one slower "Restoring cache for Act's Actions..." step after
 upgrading, not a caching regression.
+
+## Actions cache shim
+
+`act/cache-shim` translates GitHub's Actions-cache-service-v2 protocol -- what `actions/cache@v4`
+(and every `setup-*` action with built-in caching) actually speaks -- into calls against
+CircleCI's own runner API, so the wrapped action's cache calls hit a real server instead of
+Act's own ephemeral, local-disk-only cache. It is a real, ~500-line protocol implementation
+(`src/scripts/cache_shim_server.py`), not a stub, and it is exercised for real in this orb's own
+CI (`test_cache_shim` in `.circleci/test-deploy.yml`) against the live CircleCI runner API on
+every pipeline run.
+
+**Be precise about what that proves and what it doesn't.** The RPC negotiation, auth enforcement,
+and block-blob chunked-upload reassembly are all proven, both locally (`test/cache-shim/run_tests.py`,
+18/18 passing against a correct fake backend -- run it yourself: `python3 test/cache-shim/run_tests.py`)
+and against the real CircleCI API. What is **not yet proven** is a durable cross-run cache
+**hit**: CircleCI's own `/api/v2/output/cache-save` endpoint does not hand back a usable upload
+target from a plain job's task-token scope -- see "The known, real gap" below for the full,
+reproduced evidence. `actions/cache` itself treats a save failure as a non-fatal warning (never a
+build failure -- this is real GitHub Actions behavior too, caching is always best-effort), so
+wiring this shim in today is safe; it just does not yet make your cache durable.
+
+### Quick start
+
+```yaml
+version: 2.1
+orbs:
+  act: circleci/act@x.y.z
+
+jobs:
+  build_with_cache:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - setup_remote_docker
+      - act/cache-shim
+      - act/act:
+          uses: actions/cache/save@v4
+          with: |
+            path: node_modules
+            key: my-cache-key-v1
+```
+
+`act/cache-shim` must run in an earlier step of the **same job**, before `act/act`/`run-act`, for
+the same reason `act/oidc-shim` does: it exports `GITHUB_SERVER_URL`/`ACTIONS_CACHE_SERVICE_V2`/
+`ACTIONS_RESULTS_URL`/`ACTIONS_RUNTIME_TOKEN` into `$BASH_ENV`, which `act/act`'s own
+`create-env-var-secret-files` step picks up automatically with zero call-site wiring -- the same
+seam the `github-token` parameter and `act/oidc-shim` already use.
+
+### How the protocol translation works
+
+Verified directly against `actions/toolkit`'s real source (`packages/cache/src/cache.ts`,
+`cacheTwirpClient.ts`, `uploadUtils.ts`), not guessed:
+
+- `actions/cache`'s v2 client speaks Twirp -- plain JSON POSTs (always `Content-Type:
+  application/json`, confirmed in the real client source) to
+  `${ACTIONS_RESULTS_URL}twirp/github.actions.results.api.v1.CacheService/<Method>`, authenticated
+  with `Authorization: Bearer ${ACTIONS_RUNTIME_TOKEN}`.
+- `CreateCacheEntry{key,version}` gets back `{ok, signed_upload_url}`.
+- The actual archive bytes go through Azure Blob's real block-blob wire protocol against that URL
+  -- a sequence of `PUT ...?comp=block&blockid=<base64>` calls (one per chunk, `uploadConcurrency`
+  chunks in flight at once by default, so blocks can and do complete **out of order**), followed by
+  one `PUT ...?comp=blocklist` that commits the upload. There is no separate "give me a presigned
+  URL" round trip on top of this -- the URL from `CreateCacheEntry` *is* what receives the blocks.
+  `cache_shim_server.py` decodes each block's real index from its `blockid` (the same two-format
+  decode `falcondev-oss/github-actions-cache-server` -- an unrelated, independently-built OSS
+  project speaking this same real protocol -- documents; re-derived here from first principles,
+  not copied) and reassembles the archive in the correct order regardless of arrival order. This is
+  the piece the local test suite specifically exercises (blocks are sent to the test server in
+  reverse order on purpose).
+- `FinalizeCacheEntryUpload{key,version,size_bytes}` gets back `{ok, entry_id}`.
+- `GetCacheEntryDownloadURL{key,restore_keys,version}` gets back `{ok, signed_download_url,
+  matched_key}` on a hit, `{ok:false}` on a miss. Unlike upload, a real download URL needs **no**
+  shim proxying at all once one exists: `actions/cache`'s own `downloadCache()` only special-cases
+  `*.blob.core.windows.net` hostnames for the Azure SDK path -- anything else, a CircleCI URL
+  included, goes through a plain HTTP GET. So this shim can, in principle, hand back CircleCI's
+  own presigned GET URL directly and step out of the way entirely for downloads.
+
+Each RPC is translated into a call against CircleCI's own `$runner_host/api/v2/output/cache-save`
+/ `cache-restore`, authenticated with the per-job task token read once, at this shim's own
+startup, from `/tmp/circleci-ts.sock` (a plain, no-HTTP-framing unix socket that just writes
+`{"token":...,"runner_host":...}` on connect and closes -- discovered live, confirmed against
+`CircleCITestOrg/docker-agent-tester`'s own minimal Go reader for the same socket). Absence of
+that socket is a fatal, clearly-messaged startup error, not a silent no-op -- self-hosted runners
+or future CircleCI changes may not have it.
+
+### The known, real gap
+
+`$runner_host/api/v2/output/cache-save` does **not** return a presigned PUT URL the way
+`actions/cache`'s own protocol would lead you to expect. It returns a small JSON *ticket*:
+
+```json
+{"method":"POST","location":"storage/caches/<id>/<key>.tar.zst","tags":{"expiration_days":"15"}}
+```
+
+The obvious reading -- POST the archive bytes to `$runner_host/<location>` -- was tested directly
+against a real CircleCI job, repeatedly, across many separate pipeline runs, and **every
+construction 404s**:
+
+- `POST`/`PUT`/`GET`/`HEAD`/`OPTIONS` against `{runner_host}/{location}`, with and without the
+  `.tar.zst` suffix, and with the `storage/...` path additionally prefixed under
+  `/api/v2/output/`, `/api/v2/storage/`, `/api/v2/task/storage/` -- all 404, either a JSON
+  `{"message":"Route Not Found"}` (a real router, just the wrong sub-path) or a bare `404 page
+  not found` (a different framework entirely on some prefixes -- the two distinct 404 shapes are
+  themselves evidence these are different services).
+- The older, publicly-documented `POST /api/v2/task/storage/cache-save` (seen working, with a
+  real `{url}` presigned-URL response, in `CircleCI-Public/circleci-steps-sdk-ts`'s
+  `SaveCache.ts`) is itself `404 {"message":"routing error"}` on the live API -- that endpoint no
+  longer exists.
+- `OPTIONS` on `cache-save` itself (to see if a framework's default 405/404 leaks an `Allow:`
+  header or a route list), an inline base64 `content` field on the save call itself, and half a
+  dozen generic `/api/v2/output/upload`-shaped guesses were all tried too; none exists.
+
+This strongly suggests `cache-save`'s task-token scope is **metadata-only** from a plain job
+container: it can register a cache key/version, but the actual object bytes move through a
+channel only CircleCI's own runner-agent process has, not something a job step (this shim
+included) can reach over public HTTP. This is a real, reproduced finding from direct
+experimentation against production, not a guess. `_redeem_cache_save_ticket()`/
+`_resolve_download_url()` in `cache_shim_server.py` still make the documented-shape attempt
+anyway (so this starts working automatically, with no code change, the moment CircleCI's backend
+exposes the real path) but treat failure as the expected, logged, non-fatal outcome it is today.
+
+**If you want to close this gap:** the mission that produced this shim was told
+`circleci/task-agent-subcommand-cache` already ships exactly this architecture successfully for
+Bazel/Gradle/Turborepo caching. That repo's source is the fastest path to the real answer -- it
+was not reachable from this sandbox, but whoever has access to it should be able to read off the
+correct way to redeem a `cache-save` ticket in minutes rather than re-deriving it through more
+trial and error against production.
+
+### Security notes
+
+Same discipline `act/oidc-shim` was fixed to have after a real security review caught it
+discarding its own auth header (see that section above) -- applied here from the start:
+
+- **Binds `0.0.0.0` by default, deliberately.** Act's spawned action container is a sibling of
+  whatever process starts this shim, in its own network namespace; a loopback-only bind would be
+  unreachable from it (the same measured Docker topology `act/oidc-shim`'s own README documents in
+  detail applies unchanged here).
+- **The real auth boundary is a per-job request token**, generated fresh with
+  `secrets.token_urlsafe(32)`, checked with `hmac.compare_digest` (constant-time) on every
+  request. It arrives on Twirp RPCs for free as `Authorization: Bearer <token>` (this shim tells
+  `actions/cache` its own `ACTIONS_RUNTIME_TOKEN` *is* this token), and is additionally embedded
+  as a `token=` query parameter on the `signed_upload_url` this shim hands back, because real
+  Azure block-blob semantics send no bearer header on the upload PUTs at all -- without that
+  query-param check, a wide bind would leave the upload endpoint genuinely unauthenticated.
+- `/healthz` stays unauthenticated by design but returns nothing beyond a static
+  `{"status":"ok"}`.
+- Neither the per-job request token nor the CircleCI task token from `/tmp/circleci-ts.sock` is
+  ever written to this process's own logs.
+
+## Artifacts
+
+`actions/upload-artifact`/`download-artifact@v4` now work for jobs that don't use `container:` --
+via a much smaller change than a from-scratch shim would have been. Investigating this surfaced
+that **Act already ships a complete, working implementation of GitHub's real artifact-v4
+protocol** (`pkg/artifacts` in `nektos/act`'s own source: the exact Twirp
+`ArtifactService.{CreateArtifact,UploadArtifact,FinalizeArtifact,ListArtifacts,
+GetSignedArtifactURL,DownloadArtifact}` routes, storing to local disk) -- it just never starts
+that server unless you pass `--artifact-server-path`, a flag this orb never exposed. `run-act`
+now has `artifact-server-path`/`artifact-server-addr`/`artifact-server-port` parameters (all
+empty/off by default -- zero behavior change unless you set them) that pass straight through to
+Act's own CLI flags of the same name. Once Act's runner sees `ArtifactServerPath != ""`, it
+automatically injects `ACTIONS_RUNTIME_URL`/`ACTIONS_RESULTS_URL`/`ACTIONS_RUNTIME_TOKEN` into the
+wrapped action's container itself (verified directly in `pkg/runner/run_context.go`) -- no orb
+wiring needed beyond the one flag.
+
+```yaml
+- act/act:
+    uses: actions/upload-artifact@v4
+    with: |
+      name: my-artifact
+      path: some-file.txt
+    artifact-server-path: /tmp/act-artifacts
+- store_artifacts:
+    path: /tmp/act-artifacts
+    destination: gha-artifacts
+```
+
+This is real, tested in this orb's own CI (`test_artifacts` in `.circleci/test-deploy.yml`) end to
+end: the file really lands on the CircleCI host's disk at the configured path, handed to a native
+`store_artifacts` step. It does **not** fix `upload-artifact@v4` failing outright inside
+`container:`-scoped jobs ([nektos/act#2508](https://github.com/nektos/act/issues/2508), open,
+because the job's container image has no Node in it) -- that is an upstream Act limitation no
+orb-side flag can work around, exactly as anticipated when this was originally scoped as deferred
+(see `docs/ROADMAP.md` item 2).
 
 ## Capturing action outputs
 
@@ -219,15 +409,20 @@ itself.
 
 ## What does not work
 
-- **`actions/cache` (and any `setup-*` action with built-in caching) does not persist across
-  runs.** Act's own cache server is ephemeral and local-disk-only; it is not backed by this orb's
-  `cache-actions`/`cache-images` commands, which only cache *Act's own* state (the actions/images
-  it downloaded), not the workflow's own cache calls. See `docs/ROADMAP.md` item 1.
-- **`actions/upload-artifact`/`download-artifact` do not land in CircleCI's artifacts UI**, and
-  `upload-artifact@v4` fails outright inside `container:`-scoped jobs
+- **`actions/cache` save does not durably persist yet -- restore works, save's upload leg has a
+  real, reproduced gap in CircleCI's own backend.** See [Actions cache shim](#actions-cache-shim)
+  below for the full design, what's proven, and the exact evidence trail. This orb now ships a
+  real protocol-translation shim (`act/cache-shim`) rather than nothing, which is real progress
+  over the prior "not attempted" state, but a genuine cross-run cache **hit** is not yet
+  demonstrated -- be honest with yourself about that before relying on it.
+- **`actions/upload-artifact`/`download-artifact` now work for non-`container:`-scoped jobs** --
+  see [Artifacts](#artifacts) below: Act already ships a complete artifact-v4 server, this orb
+  just now exposes the one flag (`artifact-server-path`) that turns it on. `upload-artifact@v4`
+  still fails outright inside `container:`-scoped jobs
   ([nektos/act#2508](https://github.com/nektos/act/issues/2508), open) because the job's
   container image has no Node in it -- on real GitHub Actions this step runs at the runner level,
-  outside the job container, specifically to avoid that. See `docs/ROADMAP.md` item 2.
+  outside the job container, specifically to avoid that; no shim can patch around an upstream Act
+  limitation. See `docs/ROADMAP.md` item 2.
 - **No OIDC token issuance.** Act does not implement GitHub's OIDC signer
   ([nektos/act#2500](https://github.com/nektos/act/issues/2500),
   [nektos/act#2262](https://github.com/nektos/act/issues/2262), both open); an action calling

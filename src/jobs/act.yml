@@ -217,6 +217,21 @@ parameters:
     type: string
     default: ""
     description: Additional flags to be passed to the `act` CLI
+  artifact-server-path:
+    type: string
+    default: ""
+    description: >
+      Directory Act's own built-in artifact server stores uploads to/serves downloads from.
+      Empty (the default) is a no-op -- see `run-act`'s own parameter description and the
+      README's "Artifacts" section for the full explanation.
+  artifact-server-addr:
+    type: string
+    default: ""
+    description: Address Act's artifact server binds. Only meaningful when `artifact-server-path` is set.
+  artifact-server-port:
+    type: string
+    default: ""
+    description: Port Act's artifact server listens on. Only meaningful when `artifact-server-path` is set.
   skip-install:
     type: boolean
     default: false
@@ -284,6 +299,9 @@ steps:
       reuse: << parameters.reuse >>
       input-file: << parameters.input-file >>
       additional-act-flags: << parameters.additional-act-flags >>
+      artifact-server-path: << parameters.artifact-server-path >>
+      artifact-server-addr: << parameters.artifact-server-addr >>
+      artifact-server-port: << parameters.artifact-server-port >>
       skip-install: << parameters.skip-install >>
       skip-create-env-var-secret-files: << parameters.skip-create-env-var-secret-files >>
       skip-create-workflow-file: << parameters.skip-create-workflow-file >>

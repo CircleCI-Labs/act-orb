@@ -105,6 +105,22 @@ if is_true "${ORB_VAL_ACTION_OFFLINE_MODE}"; then
     act_cmd+=(--action-offline-mode)
 fi
 
+# Act already implements the real GitHub Actions artifact-v4 protocol with
+# its own built-in local server (pkg/artifacts) -- it just never starts it
+# unless --artifact-server-path is passed. Empty (the default) means none of
+# these three flags are added at all, so this is a no-op for every existing
+# caller. See run-act.yml's own parameter descriptions and the README's
+# "Artifacts" section for what this does and does not fix.
+if [ -n "${ORB_VAL_ARTIFACT_SERVER_PATH:-}" ]; then
+    act_cmd+=(--artifact-server-path "${ORB_VAL_ARTIFACT_SERVER_PATH}")
+    if [ -n "${ORB_VAL_ARTIFACT_SERVER_ADDR:-}" ]; then
+        act_cmd+=(--artifact-server-addr "${ORB_VAL_ARTIFACT_SERVER_ADDR}")
+    fi
+    if [ -n "${ORB_VAL_ARTIFACT_SERVER_PORT:-}" ]; then
+        act_cmd+=(--artifact-server-port "${ORB_VAL_ARTIFACT_SERVER_PORT}")
+    fi
+fi
+
 # Include additional flags if provided. `additional-act-flags` is the one
 # place a user can hand us something that needs real shell word-splitting
 # (e.g. "--env FOO=bar --env BAZ=qux"), so it is deliberately word-split

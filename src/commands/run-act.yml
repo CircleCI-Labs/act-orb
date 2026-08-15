@@ -133,6 +133,35 @@ parameters:
     type: string
     default: ""
     description: Additional flags to be passed to the `act` CLI
+  artifact-server-path:
+    type: string
+    default: ""
+    description: >
+      Directory Act's own built-in artifact server stores uploads to/serves downloads from
+      (`--artifact-server-path`). Empty (the default) means this flag is never passed at all --
+      identical behavior to before this parameter existed, and `actions/upload-artifact`/
+      `download-artifact` get no `ACTIONS_RUNTIME_URL`/`ACTIONS_RESULTS_URL` from Act, the same
+      as today. Set it to enable Act's OWN artifact server (Act already implements the real
+      GitHub Actions artifact-v4 protocol -- see the README's "Artifacts" section -- this
+      parameter only turns on a flag Act already has, no new server is built here) and then use
+      a native `store_artifacts`/`persist_to_workspace` step afterwards pointed at this same
+      path to actually get the uploaded files out of the ephemeral container. Does not help
+      `container:`-scoped jobs, whose `upload-artifact@v4` fails outright for an unrelated
+      reason -- see the README.
+  artifact-server-addr:
+    type: string
+    default: ""
+    description: >
+      Address Act's artifact server binds (`--artifact-server-addr`). Empty (the default) means
+      this flag is never passed, leaving Act's own default (its outbound IP). Only meaningful
+      when `artifact-server-path` is set.
+  artifact-server-port:
+    type: string
+    default: ""
+    description: >
+      Port Act's artifact server listens on (`--artifact-server-port`). Empty (the default)
+      means this flag is never passed, leaving Act's own default (`34567`). Only meaningful when
+      `artifact-server-path` is set.
   cache-key-prefix:
     type: string
     default: v1
@@ -178,6 +207,9 @@ steps:
         ORB_VAL_INPUT_FILE: <<parameters.input-file>>
         ORB_VAL_VAR_FILE: <<parameters.var-file>>
         ORB_VAL_ADDITIONAL_ACT_FLAGS: <<parameters.additional-act-flags>>
+        ORB_VAL_ARTIFACT_SERVER_PATH: <<parameters.artifact-server-path>>
+        ORB_VAL_ARTIFACT_SERVER_ADDR: <<parameters.artifact-server-addr>>
+        ORB_VAL_ARTIFACT_SERVER_PORT: <<parameters.artifact-server-port>>
         ORB_VAL_OUTPUTS: <<parameters.outputs>>
         ORB_VAL_OUTPUTS_FILE: <<parameters.outputs-file>>
       command: <<include(scripts/run-act.sh)>>
