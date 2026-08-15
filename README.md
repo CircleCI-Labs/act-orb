@@ -169,17 +169,22 @@ Verified directly against `actions/toolkit`'s real source (`packages/cache/src/c
   `${ACTIONS_RESULTS_URL}twirp/github.actions.results.api.v1.CacheService/<Method>`, authenticated
   with `Authorization: Bearer ${ACTIONS_RUNTIME_TOKEN}`.
 - `CreateCacheEntry{key,version}` gets back `{ok, signed_upload_url}`.
-- The actual archive bytes go through Azure Blob's real block-blob wire protocol against that URL
-  -- a sequence of `PUT ...?comp=block&blockid=<base64>` calls (one per chunk, `uploadConcurrency`
-  chunks in flight at once by default, so blocks can and do complete **out of order**), followed by
-  one `PUT ...?comp=blocklist` that commits the upload. There is no separate "give me a presigned
-  URL" round trip on top of this -- the URL from `CreateCacheEntry` *is* what receives the blocks.
-  `cache_shim_server.py` decodes each block's real index from its `blockid` (the same two-format
-  decode `falcondev-oss/github-actions-cache-server` -- an unrelated, independently-built OSS
-  project speaking this same real protocol -- documents; re-derived here from first principles,
-  not copied) and reassembles the archive in the correct order regardless of arrival order. This is
-  the piece the local test suite specifically exercises (blocks are sent to the test server in
-  reverse order on purpose).
+- The actual archive bytes go through Azure Blob's real block-blob wire protocol against that URL.
+  For anything over `maxSingleShotSize` (128 MiB): a sequence of `PUT
+  ...?comp=block&blockid=<base64>` calls (one per chunk, `uploadConcurrency` chunks in flight at
+  once by default, so blocks can and do complete **out of order**), followed by one `PUT
+  ...?comp=blocklist` that commits the upload. For anything smaller -- the common case, confirmed
+  live against this shim's own CI test with an 843-byte file -- it's exactly **one** plain `PUT` of
+  the whole body with **no `comp` parameter at all**; treating that as a 400 (this shim's first
+  version did, until a real CI run caught it) breaks every small, everyday cache. Either way there
+  is no separate "give me a presigned URL" round trip on top of this -- the URL from
+  `CreateCacheEntry` *is* what receives the bytes. `cache_shim_server.py` decodes each block's real
+  index from its `blockid` (the same two-format decode `falcondev-oss/github-actions-cache-server`
+  -- an unrelated, independently-built OSS project speaking this same real protocol -- documents;
+  re-derived here from first principles, not copied) and reassembles the archive in the correct
+  order regardless of arrival order. Both paths are exercised in the local test suite (blocks are
+  sent to the test server in reverse order on purpose; a separate case drives the no-`comp`
+  single-shot path).
 - `FinalizeCacheEntryUpload{key,version,size_bytes}` gets back `{ok, entry_id}`.
 - `GetCacheEntryDownloadURL{key,restore_keys,version}` gets back `{ok, signed_download_url,
   matched_key}` on a hit, `{ok:false}` on a miss. Unlike upload, a real download URL needs **no**

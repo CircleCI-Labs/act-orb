@@ -63,10 +63,15 @@ src/cache.ts, cacheTwirpClient.ts, uploadUtils.ts) -- not guessed:
     `CacheServiceClient.request()`).
   - `CreateCacheEntryRequest{key,version}` -> `{ok, signed_upload_url}`.
   - The actual bytes go through Azure Blob's block-blob wire protocol against
-    `signed_upload_url`: a sequence of `PUT ...?comp=block&blockid=<b64>`
-    (or `appendBlock`) calls, each with a chunk of the archive, followed by
-    one `PUT ...?comp=blocklist` that commits the upload. No separate
-    presigned-PUT step -- the "URL" IS the thing the blocks are PUT to.
+    `signed_upload_url`: for anything over `maxSingleShotSize` (128 MiB, per
+    `uploadCacheArchiveSDK`'s own options), a sequence of `PUT
+    ...?comp=block&blockid=<b64>` (or `appendBlock`) calls, each with a chunk
+    of the archive, followed by one `PUT ...?comp=blocklist` that commits the
+    upload. For anything smaller -- the common case, confirmed live against
+    this shim's own CI test -- `@azure/storage-blob`'s `BlockBlobClient`
+    instead does exactly ONE plain `PUT` of the whole body with NO `comp`
+    query parameter at all. No separate presigned-PUT step either way -- the
+    "URL" IS the thing bytes are PUT to.
   - `FinalizeCacheEntryUploadRequest{key,version,size_bytes}` ->
     `{ok, entry_id}`.
   - `GetCacheEntryDownloadURLRequest{key,restore_keys,version}` ->
@@ -515,7 +520,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(201, {"message": "accepted"}, request_id_header)
             return
 
-        if comp == "blocklist":
+        if comp == "blocklist" or comp == "":
+            # comp=="" (no query param at all) is a REAL, common case, not a
+            # malformed request: `@azure/storage-blob`'s BlockBlobClient only
+            # uses the block/blocklist chunked protocol above
+            # `maxSingleShotSize` (128 MiB in `uploadCacheArchiveSDK`'s own
+            # options); for anything smaller -- the common case for most
+            # real caches, and the one this shim's own live CI test exercises
+            # -- it does a single plain PUT of the WHOLE body with no `comp`
+            # parameter at all. Confirmed live: a real `actions/cache/save@v4`
+            # call for an 843-byte file hit exactly this path and got a 400
+            # before this fix ("unknown or missing 'comp' value: ''"), which
+            # `uploadCacheArchiveSDK` then surfaced as a save failure.
+            # Treat a single-shot PUT as a upload with exactly one block
+            # (index 0, this request's own body) reusing the same commit
+            # logic as a real blocklist commit.
+            if comp == "":
+                data = self._read_body()
+                with _STATE_LOCK:
+                    entry["blocks"][0] = data
+
             with _STATE_LOCK:
                 blob = b"".join(entry["blocks"][i] for i in sorted(entry["blocks"]))
                 key, version = entry["key"], entry["version"]
@@ -527,7 +551,7 @@ class Handler(BaseHTTPRequestHandler):
                 # and logs a warning rather than failing the build (see the
                 # module docstring). Detail lands in the job's own act/Act
                 # log, not silently swallowed here.
-                self.log_message("blocklist commit failed for %s: %s", upload_id, exc)
+                self.log_message("commit failed for %s: %s", upload_id, exc)
                 self._send_json(500, {"message": str(exc)})
                 return
             with _STATE_LOCK:
@@ -537,7 +561,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(201, {"message": "committed"}, request_id_header)
             return
 
-        self._send_json(400, {"message": f"unknown or missing 'comp' value: {comp!r}"})
+        self._send_json(400, {"message": f"unknown 'comp' value: {comp!r}"})
 
     def do_GET(self):
         if self.path == "/healthz":

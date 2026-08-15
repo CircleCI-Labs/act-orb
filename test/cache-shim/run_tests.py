@@ -300,6 +300,28 @@ def main():
         status, _ = http("PUT", f"{base}/upload/whatever&comp=block&blockid={make_block_id(0)}", b"x")
         check("PUT /upload/<id> with no token query param -> 401", status == 401, f"got {status}")
 
+        # --- Test 7: single-shot upload (no 'comp' param at all) ----------
+        # @azure/storage-blob's BlockBlobClient only uses the block/blocklist
+        # chunked protocol above maxSingleShotSize (128 MiB); anything
+        # smaller -- the common case -- is one plain PUT with no comp=
+        # param. Confirmed live: a real actions/cache/save@v4 call for an
+        # 843-byte file hit exactly this path and got a 400 before this was
+        # fixed.
+        backend.fail_upload = False  # Test 5 above deliberately left this True
+        key3 = "cache-shim-test-key-3"
+        status, body = http("POST", twirp_url, json.dumps({"key": key3, "version": version}), auth_headers)
+        resp = json.loads(body)
+        upload_url3 = resp["signed_upload_url"]
+        single_shot_payload = b"single-shot-upload-body"
+        status, body = http("PUT", upload_url3, single_shot_payload, {"Content-Type": "application/octet-stream"})
+        check("single-shot PUT (no comp param) -> 201", status == 201, f"got {status} {body}")
+        stored3 = backend.objects.get(f"storage/caches/fake/{key3}.tar.zst")
+        check(
+            "single-shot upload stored the exact body, byte for byte",
+            stored3 == single_shot_payload,
+            f"stored={stored3!r} expected={single_shot_payload!r}",
+        )
+
     finally:
         proc.terminate()
         try:

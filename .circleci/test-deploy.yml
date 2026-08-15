@@ -328,10 +328,16 @@ jobs:
               exit 1
             fi
             echo "OK: shim served CreateCacheEntry successfully -- protocol negotiation works."
-            if grep -q '"comp=blocklist.*" 201' "$LOG" || grep -q 'blocklist commit failed' "$LOG"; then
-              echo "OK: shim reached the blocklist-commit step (the real byte-persistence leg was attempted)."
+            # PUT /upload/<id> ends either in a 201 (commit accepted by the
+            # fake/real backend) or a 500 (commit attempted, real backend
+            # upload leg 404d -- see the README's cache-shim section); either
+            # one proves the commit step (single-shot or blocklist,
+            # actions/cache picks whichever the file size calls for) was
+            # actually reached, not skipped.
+            if grep -qE 'PUT /upload/.*" (201|500)' "$LOG"; then
+              echo "OK: shim reached the upload-commit step (the real byte-persistence leg was attempted)."
             fi
-            if grep -q 'blocklist commit failed' "$LOG"; then
+            if grep -q 'commit failed' "$LOG"; then
               echo "NOTE (expected, documented, non-fatal): the real upload to CircleCI's own"
               echo "runner API 404s past the cache-save 'ticket' -- see the README's cache-shim"
               echo "section. actions/cache treats this as a non-fatal warning, not a build failure."
