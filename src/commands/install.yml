@@ -40,7 +40,9 @@ steps:
         ORB_VAL_DEBUG: <<parameters.debug>>
         ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
         ORB_VAL_FORCE_INSTALL: <<parameters.force-install>>
-      command: <<include(scripts/install.sh)>>
+      command: |
+        <<include(scripts/lib/is_true.sh)>>
+        <<include(scripts/install.sh)>>
   - when:
       condition: << parameters.cache-cli >>
       steps:

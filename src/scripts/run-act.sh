@@ -1,14 +1,10 @@
 #!/bin/bash
 set -uo pipefail
 
-# Bash-safe truthiness for orb boolean parameters -- see install.sh for why
-# both "1" and "true" are accepted rather than assuming one encoding.
-is_true() {
-    case "${1:-}" in
-        1 | true | TRUE | True) return 0 ;;
-        *) return 1 ;;
-    esac
-}
+# is_true() is defined by the shared src/scripts/lib/is_true.sh include,
+# which run-act.yml's `command:` prepends ahead of this file's own content --
+# see that file for the single source of truth and why both "1"/"0" and
+# "true"/"false" must be accepted.
 
 if [ ! -f "${ORB_VAL_WORKFLOW_FILE}" ]; then
     echo "Error: Workflow file not found at path '${ORB_VAL_WORKFLOW_FILE}'."

@@ -46,18 +46,12 @@ sha256_of() {
     fi
 }
 
-# Bash-safe truthiness for orb boolean parameters. CircleCI's own docs do not
-# commit to a single stringified form of a boolean parameter reaching a
-# step's `environment:` map (in practice it may surface as "true"/"false"),
-# so we accept both that and the historical "1" this script used, rather
-# than silently no-op'ing a flag if the encoding differs from what one
-# comparison expects.
-is_true() {
-    case "${1:-}" in
-        1 | true | TRUE | True) return 0 ;;
-        *) return 1 ;;
-    esac
-}
+# is_true() is defined by the shared src/scripts/lib/is_true.sh include,
+# which install.yml's `command:` prepends ahead of this file's own content --
+# see that file for the single source of truth and the rationale (CircleCI's
+# own docs do not commit to a single stringified form of a boolean parameter
+# reaching a step's `environment:` map, so both "1"/"0" and "true"/"false"
+# must be accepted).
 
 INSTALL_SCRIPT_TMP="$(mktemp)"
 trap 'rm -f "${INSTALL_SCRIPT_TMP}"' EXIT

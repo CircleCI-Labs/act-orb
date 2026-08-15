@@ -86,4 +86,6 @@ steps:
         ORB_VAL_STARTUP_TIMEOUT: << parameters.startup-timeout >>
         ORB_VAL_RUNNER_TIMEOUT: << parameters.runner-timeout >>
         ORB_VAL_STATE_DIR: << parameters.state-dir >>
-      command: <<include(scripts/cache-shim-start.sh)>>
+      command: |
+        <<include(scripts/lib/is_true.sh)>>
+        <<include(scripts/cache-shim-start.sh)>>
