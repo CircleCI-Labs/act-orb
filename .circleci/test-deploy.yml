@@ -388,6 +388,338 @@ jobs:
           path: /tmp/act-artifacts
           destination: gha-artifacts
 
+  # Regression coverage for boolean-parameter encoding (added for family
+  # parity -- see harness-orb's test_run_plugin_booleans, the audit item
+  # this mirrors). run-act.sh's is_true() is the ONLY thing standing between
+  # six real orb parameters (pull, rebuild, reuse, bind, detect-event,
+  # action-offline-mode) and Act getting the opposite of what the user
+  # asked for -- and this exact bug class (published orbs render a boolean
+  # parameter as "1"/"0", inline callers render "true"/"false") has already
+  # shipped once in this orb family. Drives run-act.sh directly with a fake
+  # `act` binary on PATH that just logs its own argv, so both encodings are
+  # asserted against the REAL script, not a reimplementation of its logic.
+  test_run_act_booleans:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: "Regression test - pull/rebuild/reuse/bind/detect-event/action-offline-mode booleans reach act's own argv"
+          command: |
+            set -euo pipefail
+            fakebin="$(mktemp -d)"
+            call_log="$(mktemp)"
+            cat > "${fakebin}/act" << 'FAKEACT'
+            #!/bin/bash
+            echo "$@" >> "${ACT_CALL_LOG}"
+            FAKEACT
+            chmod +x "${fakebin}/act"
+
+            # run-act.sh no longer defines is_true() itself -- run-act.yml's
+            # `command:` prepends the shared src/scripts/lib/is_true.sh
+            # include ahead of it at pack time (see that file). This test
+            # drives the real script file directly, standalone, so source the
+            # shared definition and export it as a bash function so the
+            # `bash src/scripts/run-act.sh` call below sees it too.
+            # shellcheck source=/dev/null
+            source src/scripts/lib/is_true.sh
+            export -f is_true
+
+            # run-act.sh requires the workflow file to actually exist (a real,
+            # separate check unrelated to booleans) -- give it an empty one.
+            # Every OTHER *-file parameter is deliberately left pointed at a
+            # nonexistent path: run-act.sh only warns and skips the matching
+            # --*-file flag for those, which is irrelevant to this test.
+            wf="$(mktemp)"
+            missing="$(mktemp -u)"
+
+            run_case() {
+              : > "${call_log}"
+              PATH="${fakebin}:${PATH}" \
+                ACT_CALL_LOG="${call_log}" \
+                ORB_VAL_WORKFLOW_FILE="${wf}" \
+                ORB_VAL_PLATFORM="ubuntu-latest=catthehacker/ubuntu:act-latest" \
+                ORB_VAL_ENV_FILE="${missing}.env" \
+                ORB_VAL_SECRET_FILE="${missing}.secrets" \
+                ORB_VAL_INPUT_FILE="${missing}.input" \
+                ORB_VAL_VAR_FILE="${missing}.vars" \
+                ORB_VAL_EVENT_FILE="${missing}.event" \
+                ORB_VAL_ACTOR="nektos/act" \
+                ORB_VAL_VERBOSE="false" \
+                ORB_VAL_DIRECTORY="." \
+                ORB_VAL_DEFAULT_BRANCH="main" \
+                ORB_VAL_JOB="" \
+                ORB_VAL_REMOTE_NAME="origin" \
+                ORB_VAL_ADDITIONAL_ACT_FLAGS="" \
+                ORB_VAL_ARTIFACT_SERVER_PATH="" \
+                ORB_VAL_ARTIFACT_SERVER_ADDR="" \
+                ORB_VAL_ARTIFACT_SERVER_PORT="" \
+                ORB_VAL_OUTPUTS="" \
+                ORB_VAL_OUTPUTS_FILE=".act-orb-outputs.env" \
+                ORB_VAL_PULL="$1" \
+                ORB_VAL_REBUILD="$2" \
+                ORB_VAL_REUSE="$3" \
+                ORB_VAL_BIND="$4" \
+                ORB_VAL_DETECT_EVENT="$5" \
+                ORB_VAL_ACTION_OFFLINE_MODE="$6" \
+                bash src/scripts/run-act.sh > /dev/null
+            }
+
+            assert_all_true() {
+              local encoding="$1"
+              if grep -q -- '--pull=false' "${call_log}"; then
+                echo "FAIL (${encoding}): pull=true still added --pull=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              if grep -q -- '--rebuild=false' "${call_log}"; then
+                echo "FAIL (${encoding}): rebuild=true still added --rebuild=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              for flag in '--reuse' '--bind' '--detect-event' '--action-offline-mode'; do
+                if ! grep -q -- "${flag}" "${call_log}"; then
+                  echo "FAIL (${encoding}): true did not add ${flag} - got:" >&2
+                  cat "${call_log}" >&2; exit 1
+                fi
+              done
+              echo "OK (${encoding}): all six true-booleans took effect."
+            }
+
+            assert_all_false() {
+              local encoding="$1"
+              if ! grep -q -- '--pull=false' "${call_log}"; then
+                echo "FAIL (${encoding}): pull=false did not add --pull=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              if ! grep -q -- '--rebuild=false' "${call_log}"; then
+                echo "FAIL (${encoding}): rebuild=false did not add --rebuild=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              for flag in '--reuse' '--bind' '--detect-event' '--action-offline-mode'; do
+                if grep -q -- "${flag}" "${call_log}"; then
+                  echo "FAIL (${encoding}): false still added ${flag} - got:" >&2
+                  cat "${call_log}" >&2; exit 1
+                fi
+              done
+              echo "OK (${encoding}): all six false-booleans correctly did nothing."
+            }
+
+            # Published-orb encoding: booleans render as "1"/"0".
+            run_case "1" "1" "1" "1" "1" "1"
+            assert_all_true "1/0 encoding, all true"
+            run_case "0" "0" "0" "0" "0" "0"
+            assert_all_false "1/0 encoding, all false"
+
+            # Inline-job encoding: booleans render as "true"/"false".
+            run_case "true" "true" "true" "true" "true" "true"
+            assert_all_true "true/false encoding, all true"
+            run_case "false" "false" "false" "false" "false" "false"
+            assert_all_false "true/false encoding, all false"
+
+            echo "All boolean-encoding regression cases passed."
+
+  # Direct script-level tests (added for family parity -- the four vendor orbs all invoke their
+  # own scripts directly with ORB_VAL_* env vars and assert on exact error text for hostile
+  # input; act-orb had zero direct script tests before this job, every script was only exercised
+  # indirectly through a full act/act dispatch). Covers create-workflow-file.sh's own hostile
+  # input (neither action/uses nor id set) plus an injection-regression case for each of
+  # `with`/`env`/`services` -- the exact three parameters the README's own Security notes flag
+  # as "trusted, unescaped input." This does NOT fix that -- it pins the CURRENT, documented
+  # behavior (verbatim, unescaped passthrough) so a future change to escaping is a deliberate,
+  # visible decision instead of a silent one that leaves the README's own claim stale.
+  test_create_workflow_file_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - run:
+          name: Hostile input - neither action/uses nor id set is rejected with the exact error
+          command: |
+            set -eu
+            wf="$(mktemp)"
+            set +e
+            error_output="$(ORB_VAL_WORKFLOW_FILE="${wf}" ORB_VAL_ACTION="" ORB_VAL_ACTION_ID="" \
+              ORB_VAL_WITH="" ORB_VAL_INPUTS="" ORB_VAL_ENV="" ORB_VAL_WORKFLOW_NAME=circleci \
+              ORB_VAL_WORKFLOW_EVENT=push ORB_VAL_JOB_NAME=action ORB_VAL_RUNS_ON_IMAGE=ubuntu-latest \
+              ORB_VAL_SERVICES="" ORB_VAL_OUTPUTS="" ORB_VAL_OUTPUTS_FILE=.act-orb-outputs.env \
+              bash src/scripts/create-workflow-file.sh 2>&1)"
+            actual_exit=$?
+            set -e
+            if [ "${actual_exit}" -eq 0 ]; then
+              echo "FAIL: expected create-workflow-file.sh to reject when neither action/uses nor id is set, but it exited 0" >&2
+              exit 1
+            fi
+            case "${error_output}" in
+              *"one of the 'action'/'uses' or 'id' parameters is required but neither was set"*) ;;
+              *)
+                echo "FAIL: expected that exact error text, got:" >&2
+                echo "${error_output}" >&2
+                exit 1
+                ;;
+            esac
+            echo "OK: missing action/uses/id is rejected with the exact, documented error."
+      - run:
+          name: "Injection regression - with/env/services pass through verbatim, unescaped"
+          command: |
+            set -euo pipefail
+            wf="$(mktemp)"
+            ORB_VAL_WORKFLOW_FILE="${wf}" \
+              ORB_VAL_ACTION="actions/hello-world-javascript-action@v1.1" \
+              ORB_VAL_ACTION_ID="" \
+              ORB_VAL_WITH=$'legit-key: legit-value\ninjected-key: "attacker value with a colon: and a dash - here"' \
+              ORB_VAL_INPUTS="" \
+              ORB_VAL_ENV=$'plain: env-value\nENV_INJECTED: "another: colon - dash"' \
+              ORB_VAL_WORKFLOW_NAME=circleci ORB_VAL_WORKFLOW_EVENT=push ORB_VAL_JOB_NAME=action \
+              ORB_VAL_RUNS_ON_IMAGE=ubuntu-latest \
+              ORB_VAL_SERVICES=$'evil-service:\n  image: attacker/whatever:latest' \
+              ORB_VAL_OUTPUTS="" ORB_VAL_OUTPUTS_FILE=.act-orb-outputs.env \
+              bash src/scripts/create-workflow-file.sh
+
+            echo "=== generated workflow ==="
+            cat "${wf}"
+            echo "=================="
+
+            assert_line() {
+              if ! grep -qxF "$1" "${wf}"; then
+                echo "FAIL: expected this EXACT, unescaped line in the generated workflow:" >&2
+                echo "  $1" >&2
+                echo "This is a regression check for the README's own documented 'trusted," >&2
+                echo "unescaped input' security posture -- if this now fails because the line" >&2
+                echo "came through escaped/quoted/rejected instead, that is a real, deliberate" >&2
+                echo "behavior change that the README's Security notes section must be updated" >&2
+                echo "to match, not a bug in this test." >&2
+                exit 1
+              fi
+            }
+            assert_line '          injected-key: "attacker value with a colon: and a dash - here"'
+            assert_line '          ENV_INJECTED: "another: colon - dash"'
+            assert_line '        image: attacker/whatever:latest'
+            echo "OK: with/env/services all passed through verbatim and unescaped, exactly as documented."
+
+  # Gap-closing test: create-env-var-secret-files.sh had no dedicated direct test -- only
+  # exercised indirectly via act/act. Covers the secrets-vs-variables priority conflict, and pins
+  # the README's own documented risk (Security notes: "still written unquoted... may not
+  # round-trip an embedded newline correctly") as a real, reproduced regression check: an
+  # ordinary (non-secret) env var whose VALUE contains an embedded newline forges an extra,
+  # unrelated KEY=VALUE line into the plaintext .env file Act reads from.
+  test_create_env_var_secret_files_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - run:
+          name: Secrets-vs-variables conflict, and an injection regression via an embedded newline
+          command: |
+            set -euo pipefail
+            env_file="$(mktemp)"; secret_file="$(mktemp)"; var_file="$(mktemp)"
+            rm -f "${env_file}" "${secret_file}" "${var_file}"
+
+            export CCI_TEST_SECRET="topsecret"
+            export CCI_TEST_VAR="varvalue"
+            export CCI_TEST_CONFLICT="should-be-secret-not-var"
+            # Hostile input: an ordinary env var whose value embeds a newline followed by
+            # something that looks like its own KEY=VALUE line.
+            export CCI_TEST_INJECT=$'line-one\nCCI_INJECTED=evil'
+
+            ORB_VAL_ENV_FILE="${env_file}" ORB_VAL_SECRET_FILE="${secret_file}" ORB_VAL_VAR_FILE="${var_file}" \
+              ORB_VAL_SECRETS="CCI_TEST_SECRET,CCI_TEST_CONFLICT" \
+              ORB_VAL_VARIABLES="CCI_TEST_VAR,CCI_TEST_CONFLICT" \
+              ORB_VAL_GITHUB_TOKEN="" \
+              bash src/scripts/create-env-var-secret-files.sh
+
+            echo "=== secret file ==="; cat "${secret_file}"
+            echo "=== var file ==="; cat "${var_file}"
+            echo "=== env file ==="; cat "${env_file}"
+
+            if ! grep -qx "CCI_TEST_CONFLICT=should-be-secret-not-var" "${secret_file}"; then
+              echo "FAIL: a key named in both secrets and variables should land in the SECRET file" >&2
+              exit 1
+            fi
+            if grep -q "^CCI_TEST_CONFLICT=" "${var_file}"; then
+              echo "FAIL: CCI_TEST_CONFLICT leaked into the var file as well as the secret file" >&2
+              exit 1
+            fi
+            echo "OK: secrets-vs-variables conflict resolves to secret, as documented."
+
+            if ! grep -qx "CCI_TEST_INJECT=line-one" "${env_file}"; then
+              echo "FAIL: expected the first line of the multi-line value in the plaintext env file" >&2
+              exit 1
+            fi
+            if ! grep -qx "CCI_INJECTED=evil" "${env_file}"; then
+              echo "FAIL (regression): expected the embedded-newline continuation line to appear as" >&2
+              echo "its own forged 'CCI_INJECTED=evil' line -- this is the CURRENT, documented risk" >&2
+              echo "(README Security notes: values are written unquoted). If this now fails because" >&2
+              echo "the value round-trips safely instead, that is a real improvement the README's" >&2
+              echo "own warning should be updated to reflect, not a bug in this test." >&2
+              exit 1
+            fi
+            echo "OK (documented risk, pinned as a regression check, not fixed here): an embedded"
+            echo "newline in an ordinary env var's value forges an extra, unrelated line in the"
+            echo "plaintext .env file, exactly as the README's Security notes already warn."
+
+  # Gap-closing test: collect-outputs.sh had no dedicated direct test either. Covers the
+  # documented safe-no-op-on-missing-file path, the dash-sanitization warning path, AND --
+  # deliberately contrasting with create-env-var-secret-files.sh's own documented risk above --
+  # proves collect-outputs.sh's printf '%q' quoting genuinely neutralizes shell metacharacters
+  # (command substitution, backticks, quotes) in an action's own output VALUE rather than
+  # re-interpreting them when $BASH_ENV is later sourced.
+  test_collect_outputs_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - run:
+          name: Missing handoff file is a safe no-op (exit 0, no error)
+          command: |
+            set -euo pipefail
+            dir="$(mktemp -d)"
+            export BASH_ENV="$(mktemp)"
+            ORB_VAL_DIRECTORY="${dir}" ORB_VAL_OUTPUTS_FILE=".missing.env" ORB_VAL_OUTPUTS="time" \
+              bash src/scripts/collect-outputs.sh
+            echo "OK: a missing handoff file exits 0 with no error, as documented."
+      - run:
+          name: "Hostile output key (dash) and a shell-metacharacter value are both handled safely"
+          command: |
+            set -euo pipefail
+            dir="$(mktemp -d)"
+            handoff="${dir}/.act-orb-outputs.env"
+            {
+              printf "%s<<%s\n" "my-output" "DELIM1"
+              printf "%s\n" "safe-value"
+              printf "%s\n" "DELIM1"
+              printf "%s<<%s\n" "evil" "DELIM2"
+              printf '%s\n' '$(touch /tmp/pwned-subshell) `touch /tmp/pwned-backtick` "quoted"'
+              printf "%s\n" "DELIM2"
+            } > "${handoff}"
+
+            export BASH_ENV="$(mktemp)"
+            : > "${BASH_ENV}"
+            OUT="$(ORB_VAL_DIRECTORY="${dir}" ORB_VAL_OUTPUTS_FILE=".act-orb-outputs.env" \
+              ORB_VAL_OUTPUTS="my-output,evil" bash src/scripts/collect-outputs.sh 2>&1)"
+            echo "${OUT}"
+
+            case "${OUT}" in
+              *"is not a valid shell variable name; exporting as 'my_output' instead"*) ;;
+              *)
+                echo "FAIL: expected the dash-sanitization warning for 'my-output'" >&2
+                exit 1
+                ;;
+            esac
+
+            # shellcheck disable=SC1090
+            ( source "${BASH_ENV}"
+              if [ "${my_output:-}" != "safe-value" ]; then
+                echo "FAIL: expected my_output=safe-value after sourcing \$BASH_ENV, got '${my_output:-}'" >&2
+                exit 1
+              fi
+              if [ "${evil:-}" != '$(touch /tmp/pwned-subshell) `touch /tmp/pwned-backtick` "quoted"' ]; then
+                echo "FAIL: expected the metacharacter value to round-trip EXACTLY, got '${evil:-}'" >&2
+                exit 1
+              fi
+            )
+            if [ -e /tmp/pwned-subshell ] || [ -e /tmp/pwned-backtick ]; then
+              echo "FAIL: shell metacharacters in an output VALUE actually executed when \$BASH_ENV was sourced" >&2
+              exit 1
+            fi
+            echo "OK: dash-sanitized key exported correctly, and a shell-metacharacter value"
+            echo "round-tripped exactly without executing -- printf '%q' quoting works as designed."
+
 workflows:
   test-deploy:
     jobs:
@@ -396,6 +728,18 @@ workflows:
           filters: *filters
       - test_artifacts:
           name: Testing Artifacts (Act's built-in server)
+          filters: *filters
+      - test_run_act_booleans:
+          name: Testing Boolean Parameter Encoding
+          filters: *filters
+      - test_create_workflow_file_script:
+          name: Testing create-workflow-file.sh Directly
+          filters: *filters
+      - test_create_env_var_secret_files_script:
+          name: Testing create-env-var-secret-files.sh Directly
+          filters: *filters
+      - test_collect_outputs_script:
+          name: Testing collect-outputs.sh Directly
           filters: *filters
       # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
       # Test your orb's commands in a custom job and test your orb's jobs directly as a part of this workflow.
@@ -463,6 +807,16 @@ workflows:
             - "Testing github-token Seam"
             - "Testing Overriding Executor"
             - "Testing Running Workflow File"
+            - "Testing Actions Cache Shim"
+            - "Testing Artifacts (Act's built-in server)"
+            - "Testing GHA Workflow Compiler (compile)"
+            - "Testing GHA Workflow Compiler (render + run)"
+            - "Testing GHA Workflow Compiler (matrix)"
+            - "Testing GHA Workflow Compiler (self-hosted runner)"
+            - "Testing Boolean Parameter Encoding"
+            - "Testing create-workflow-file.sh Directly"
+            - "Testing create-env-var-secret-files.sh Directly"
+            - "Testing collect-outputs.sh Directly"
       - orb-tools/publish:
           name: "Publish Dev"
           orb_name: cci-labs/act
