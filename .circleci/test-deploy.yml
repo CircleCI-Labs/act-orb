@@ -274,28 +274,28 @@ jobs:
   # regresses, and reports (without failing the build, matching
   # actions/cache's own best-effort semantics) whatever the real,
   # live outcome of the upload/restore leg is.
+  # Uses the `machine` executor (this orb's own documented default -- see
+  # src/executors/default.yml), NOT docker+setup_remote_docker, for a real,
+  # measured reason: setup_remote_docker gives you a REMOTE Docker daemon
+  # that cannot see this job container's own filesystem at all, so `--bind`
+  # (a volume mount) silently shares nothing. Confirmed live: caching even
+  # this repo's own already-committed LICENSE file failed with "No files
+  # were found with the provided path: LICENSE" under setup_remote_docker;
+  # switching to `machine` (a real local Docker daemon) fixed it immediately
+  # with no other change. This is very likely also the root cause of the
+  # pre-existing, out-of-scope test_output_capture/test_stale_outputs_guard
+  # failures noted in this repo's own history -- both also rely on `--bind`
+  # under docker+setup_remote_docker -- but fixing those is out of scope
+  # here; this comment just records the likely shared root cause for
+  # whoever picks that up next.
   test_cache_shim:
-    docker:
-      - image: cimg/base:current
+    machine:
+      image: ubuntu-2204:current
     steps:
       - checkout
-      - setup_remote_docker
       - act/cache-shim
       - act/act:
-          # checkout: false -- we already checked out once above. Caching
-          # this repo's own already-committed LICENSE file (rather than a
-          # freshly-created untracked one) sidesteps a real, measured
-          # problem: a file created by a plain `run:` step right before
-          # act/act, on the CircleCI host, was NOT visible inside Act's
-          # container by the time the wrapped action ran ("Path Validation
-          # Error: Path(s) specified in the action for caching do(es) not
-          # exist" -- this is the first test in this whole orb relying on a
-          # host-created file crossing the --bind boundary; every existing
-          # test either doesn't need a file at all or reads one the action
-          # itself creates inside its own container). An already-checked-out
-          # tracked file needs no such crossing and is proven to work
-          # elsewhere in this suite (e.g. workflow-file: .github/workflows/
-          # hello-world.yml in "Testing Running Workflow File" above).
+          # checkout: false -- we already checked out once above.
           checkout: false
           uses: actions/cache/save@v4
           with: |
@@ -347,18 +347,15 @@ jobs:
   # `actions/upload-artifact@v4` through act/act and asserts the uploaded
   # file actually lands on the CircleCI host's disk at the configured path,
   # then hands it to a native `store_artifacts` step.
+  # `machine`, not docker+setup_remote_docker -- see the test_cache_shim
+  # job's own comment above for why (remote Docker cannot see this
+  # container's filesystem, so --bind shares nothing).
   test_artifacts:
-    docker:
-      - image: cimg/base:current
+    machine:
+      image: ubuntu-2204:current
     steps:
       - checkout
-      - setup_remote_docker
       - act/act:
-          # checkout: false, and uploading this repo's own already-committed
-          # LICENSE file rather than a freshly-created one -- see the
-          # cache-shim job's own comment above for the real, measured reason
-          # (a host-created file wasn't visible inside Act's container by
-          # the time the wrapped action ran).
           checkout: false
           uses: actions/upload-artifact@v4
           with: |
