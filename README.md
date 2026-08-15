@@ -248,7 +248,73 @@ itself.
 - **One action per job/command invocation.** This orb (like its ecosystem-bridge siblings)
   generates one job, one step, one action per `act/act` call by design -- it is not a general
   GitHub Actions workflow executor. If you need a multi-step workflow, hand-write the workflow
-  file and pass it via `skip-create-workflow-file: true` (see [Examples](#examples)).
+  file and pass it via `skip-create-workflow-file: true` (see [Examples](#examples)), or, for a
+  whole multi-job `.github/workflows` file, see the compiler below.
+
+## GitHub Actions workflow compiler
+
+`install-ghac`, `gha-compile`, and `gha-render-job` compile a real GitHub Actions workflow file
+into a CircleCI config -- one CircleCI job per GitHub job, wired together with `requires:` and
+`filters:` -- rather than requiring you to hand-translate it action by action. Each generated job
+still runs its GitHub steps via `act/act` under the hood (see
+[`render_and_run_github_job.yml`](src/examples/render_and_run_github_job.yml)); the compiler's job
+is deciding what the CircleCI jobs and their wiring should be, not reimplementing what Act already
+does correctly.
+
+**MVP boundary: multi-job workflows connected only by `needs:` (and, within that, only the
+`needs.<job>.outputs.<name>` form of cross-job data flow).** Nothing about this is silently
+ignored -- every construct that isn't one of the specific supported shapes below is **rejected by
+name**, with the exact unsupported construct quoted in the error, at compile time. A workflow
+either compiles into something this orb has verified will run, or it fails loudly telling you
+exactly which line stopped it. See `tools/ghac/README.md` for the full design writeup and how the
+prototype's real-CLI, real-`act` validation was done.
+
+### How it's wired
+
+1. Commit a `setup: true` `.circleci/config.yml` that runs `act/gha-compile` against your
+   `.github/workflows/*.yml` file and hands the result to
+   [`circleci/continuation`](https://circleci.com/developer/orbs/orb/circleci/continuation)'s
+   `continue` command -- see
+   [`compile_github_workflow.yml`](src/examples/compile_github_workflow.yml) for the complete file.
+2. Every job the compiler generates calls `act/gha-render-job` (which re-derives that one job's
+   `needs:`-stripped workflow file from the same checked-out source -- see `tools/ghac/README.md`
+   for why this happens per-job, at job runtime, rather than once in the setup job) followed by
+   `act/act` with `skip-create-workflow-file: true`, pointed at the rendered file. This is not new
+   behavior of `act/act` -- the `skip-create-workflow-file`/`workflow-file`/`job` combination
+   already existed for hand-authored workflows; the compiler is just the thing generating that
+   file for you now.
+
+### What's supported, what's rejected, what's delegated
+
+"Delegated" means Act resolves that construct itself, from the real, unmodified workflow file --
+correctly, because it's Act's own job to do so, not something this compiler reimplements.
+
+| Construct | Outcome |
+|---|---|
+| `runs-on:` (single string, in the built-in mapping table: `ubuntu-latest`/`ubuntu-22.04`/`ubuntu-24.04`) | **Supported** -- mapped to a CircleCI `machine:` executor + `act --platform` image |
+| `runs-on:` (unmapped label, e.g. a custom self-hosted name) | **Rejected by name** |
+| `runs-on: self-hosted` | **Rejected by name** -- explicit reason, not a generic lookup failure |
+| `runs-on: windows-latest` / `macos-latest` | **Rejected by name** -- explicit reason (Act/CircleCI executor mismatch) |
+| `runs-on:` as a list (e.g. `[self-hosted, linux]`) | **Rejected by name** |
+| `needs:` (string or list) | **Supported** -- becomes `requires:` |
+| `if: github.ref == 'refs/heads/X'` / `'refs/tags/X'` | **Supported** -- becomes `filters:` |
+| `if: github.ref_name == 'X'` | **Supported** (treated as a branch name) |
+| `if: startsWith(github.ref, 'refs/heads/'|'refs/tags/')` | **Supported** |
+| `if:` (any other expression) | **Rejected by name** -- the raw expression text is quoted in the error |
+| Step-level `if:` | **Delegated** |
+| `jobs.<job>.outputs.<name>: ${{ steps.X.outputs.Y }}` | **Supported** -- captured via a synthetic step, wired through workspace |
+| `jobs.<job>.outputs.<name>` (literal value, or any other expression shape) | **Rejected by name** |
+| `${{ needs.<job>.outputs.<name> }}` (exact whole expression) | **Supported** -- rewritten to `${{ env.* }}`, threaded through `persist_to_workspace`/`attach_workspace` |
+| `${{ needs.<job>.result }}` / `needs.*` combined with other operators or inside a function call | **Rejected by name** -- the expression-language wall; see `tools/ghac/README.md` |
+| `strategy:` (matrix) | **Rejected by name** -- the highest-value next increment, not in this MVP |
+| `services:` (job-level) | **Rejected by name** |
+| `uses:` (job calls a reusable workflow) | **Rejected by name** |
+| `permissions:` / `concurrency:` (workflow- or job-level) | **Rejected by name** |
+| `environment:` (job-level deployment environments) | **Rejected by name** |
+| `on:` (workflow trigger config) | **Not translated, by design** -- CircleCI's own pipeline triggers (in the setup config you commit) decide when the pipeline runs; documented here rather than left as a silent no-op |
+| `env:` / `defaults:` / `container:` (workflow-, job-, step-level) | **Delegated** |
+| `uses:`/`with:`/`run:`/`id:`/`name:`/`shell:`/`timeout-minutes:`/`continue-on-error:` (step-level) | **Delegated** |
+| Any other `${{ }}` expression not mentioning `needs.*` (`github.*`, `secrets.*`, `vars.*`, `matrix.*`, `env.*`, `inputs.*`, same-job `steps.*.outputs.*`) | **Delegated** |
 
 ## Resources
 
