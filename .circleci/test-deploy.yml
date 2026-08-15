@@ -310,8 +310,8 @@ jobs:
               exit 1
             fi
 
-            TOKEN="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" <<< "$RESP")"
-            RUNNER_HOST="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('runner_host',''))" <<< "$RESP")"
+            TOKEN="$(printf '%s' "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))")"
+            RUNNER_HOST="$(printf '%s' "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('runner_host',''))")"
             if [ -z "$TOKEN" ] || [ -z "$RUNNER_HOST" ]; then
               echo "FATAL: parsed empty token or runner_host out of: $RESP" >&2
               exit 1
