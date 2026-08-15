@@ -281,21 +281,25 @@ jobs:
       - checkout
       - setup_remote_docker
       - act/cache-shim
-      - run:
-          name: Create a small file to cache
-          command: |
-            mkdir -p cache-shim-test-dir
-            echo "hello from cache-shim test, pipeline << pipeline.number >>" > cache-shim-test-dir/file.txt
       - act/act:
-          # checkout: false -- we already checked out once above, and the
-          # test-fixture file created in the previous step is untracked;
-          # act/act's own default (re-)checkout step can wipe untracked
-          # files created since the last real checkout (measured for real:
-          # this failed with the default before this fix).
+          # checkout: false -- we already checked out once above. Caching
+          # this repo's own already-committed LICENSE file (rather than a
+          # freshly-created untracked one) sidesteps a real, measured
+          # problem: a file created by a plain `run:` step right before
+          # act/act, on the CircleCI host, was NOT visible inside Act's
+          # container by the time the wrapped action ran ("Path Validation
+          # Error: Path(s) specified in the action for caching do(es) not
+          # exist" -- this is the first test in this whole orb relying on a
+          # host-created file crossing the --bind boundary; every existing
+          # test either doesn't need a file at all or reads one the action
+          # itself creates inside its own container). An already-checked-out
+          # tracked file needs no such crossing and is proven to work
+          # elsewhere in this suite (e.g. workflow-file: .github/workflows/
+          # hello-world.yml in "Testing Running Workflow File" above).
           checkout: false
           uses: actions/cache/save@v4
           with: |
-            path: cache-shim-test-dir
+            path: LICENSE
             key: cache-shim-test-<< pipeline.number >>
           force-install: false
           debug: true
@@ -303,7 +307,7 @@ jobs:
           checkout: false
           uses: actions/cache/restore@v4
           with: |
-            path: cache-shim-test-dir
+            path: LICENSE
             key: cache-shim-test-<< pipeline.number >>
           force-install: false
           debug: true
@@ -349,20 +353,17 @@ jobs:
     steps:
       - checkout
       - setup_remote_docker
-      - run:
-          name: Create a small file to upload as an artifact
-          command: |
-            mkdir -p artifact-test-dir
-            echo "hello from artifact test, pipeline << pipeline.number >>" > artifact-test-dir/file.txt
       - act/act:
-          # See the cache-shim job's own comment: act/act's default
-          # (re-)checkout can wipe the untracked fixture file created just
-          # above; we already checked out once at the top of this job.
+          # checkout: false, and uploading this repo's own already-committed
+          # LICENSE file rather than a freshly-created one -- see the
+          # cache-shim job's own comment above for the real, measured reason
+          # (a host-created file wasn't visible inside Act's container by
+          # the time the wrapped action ran).
           checkout: false
           uses: actions/upload-artifact@v4
           with: |
             name: cache-shim-test-artifact
-            path: artifact-test-dir/file.txt
+            path: LICENSE
           artifact-server-path: /tmp/act-artifacts
           force-install: false
           debug: true
