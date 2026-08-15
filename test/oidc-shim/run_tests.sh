@@ -19,16 +19,6 @@ START_SCRIPT="${SHIM_DIR}/src/scripts/oidc-shim-start.sh"
 SERVER_PY_CANONICAL="${SHIM_DIR}/src/scripts/oidc_shim_server.py"
 CLIENT="${HERE}/toolkit_client.py"
 
-# oidc-shim-start.sh no longer defines is_true() itself -- oidc-shim.yml's
-# `command:` prepends the shared src/scripts/lib/is_true.sh include ahead of
-# it at pack time (see that file). Every `bash "${START_SCRIPT}"` call below
-# runs the script directly, standalone, the same way this test harness always
-# has -- so source the shared definition here and export it as a bash
-# function so each of those child `bash` invocations sees it too.
-# shellcheck source=/dev/null
-source "${SHIM_DIR}/src/scripts/lib/is_true.sh"
-export -f is_true
-
 WORKDIR="$(mktemp -d)"
 PASS=0
 FAIL=0

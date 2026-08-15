@@ -100,6 +100,4 @@ steps:
         ORB_VAL_MINT_TIMEOUT: << parameters.mint-timeout >>
         ORB_VAL_CIRCLECI_BIN: << parameters.circleci-bin >>
         ORB_VAL_STATE_DIR: << parameters.state-dir >>
-      command: |
-        <<include(scripts/lib/is_true.sh)>>
-        <<include(scripts/oidc-shim-start.sh)>>
+      command: <<include(scripts/oidc-shim-start.sh)>>

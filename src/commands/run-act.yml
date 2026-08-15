@@ -212,9 +212,7 @@ steps:
         ORB_VAL_ARTIFACT_SERVER_PORT: <<parameters.artifact-server-port>>
         ORB_VAL_OUTPUTS: <<parameters.outputs>>
         ORB_VAL_OUTPUTS_FILE: <<parameters.outputs-file>>
-      command: |
-        <<include(scripts/lib/is_true.sh)>>
-        <<include(scripts/run-act.sh)>>
+      command: <<include(scripts/run-act.sh)>>
   - when:
       condition:
         not:

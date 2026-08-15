@@ -1,10 +1,16 @@
 #!/bin/bash
 set -uo pipefail
 
-# is_true() is defined by the shared src/scripts/lib/is_true.sh include, which
-# oidc-shim.yml's `command:` prepends ahead of this file's own content -- see
-# that file for the single source of truth and why this used to be a
-# copy-pasted, independently-maintained definition here.
+# Bash-safe truthiness for orb boolean parameters -- both "1"/"0" (published
+# orb) and "true"/"false" (inline job, per this project's own recorded
+# boolean-parameter quirk) must be accepted. Matches install.sh's own
+# is_true() exactly.
+is_true() {
+    case "${1:-}" in
+        1 | true | TRUE | True) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 if ! is_true "${ORB_VAL_ENABLED}"; then
     echo "oidc-shim: enabled=false, not starting. ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN will not be set for later steps."

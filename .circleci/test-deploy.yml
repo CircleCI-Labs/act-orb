@@ -415,16 +415,6 @@ jobs:
             FAKEACT
             chmod +x "${fakebin}/act"
 
-            # run-act.sh no longer defines is_true() itself -- run-act.yml's
-            # `command:` prepends the shared src/scripts/lib/is_true.sh
-            # include ahead of it at pack time (see that file). This test
-            # drives the real script file directly, standalone, so source the
-            # shared definition and export it as a bash function so the
-            # `bash src/scripts/run-act.sh` call below sees it too.
-            # shellcheck source=/dev/null
-            source src/scripts/lib/is_true.sh
-            export -f is_true
-
             # run-act.sh requires the workflow file to actually exist (a real,
             # separate check unrelated to booleans) -- give it an empty one.
             # Every OTHER *-file parameter is deliberately left pointed at a
