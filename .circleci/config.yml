@@ -9,6 +9,17 @@ filters: &filters
     only: /.*/
 
 jobs:
+  check-cli-version:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Install CircleCI CLI
+          command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
+      - run:
+          name: Check CircleCI CLI version floor (>= 1.0.48254)
+          command: bash scripts/check-circleci-cli-version.sh
   shfmt-check:
     # Pinned to an exact tag of the maintainer's own published image -- no
     # credentials required, matches this repo's "pin everything" posture.
@@ -23,10 +34,13 @@ jobs:
 workflows:
   lint-pack:
     jobs:
+      - check-cli-version:
+          filters: *filters
       - orb-tools/lint:
           filters: *filters
       - orb-tools/pack:
           filters: *filters
+          requires: [check-cli-version]
       # Ignore RC010
       - orb-tools/review:
           filters: *filters

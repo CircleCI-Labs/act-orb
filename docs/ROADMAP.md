@@ -164,3 +164,34 @@ nektos/act's own installer), and `cache-cli` already avoids the actual binary do
 `check_installed_version()` short-circuiting before even reading its own network-fetch code path
 when the binary present matches `-v` faster than it does today -- rather than a second,
 orb-side copy of the same check that has to be kept in sync by hand.
+
+## 8. `github-token` parameter: a seam for a future platform-minted token, not a mint
+
+**What shipped:** an additive `github-token` parameter (type `env_var_name`, default
+`GITHUB_TOKEN`) on `act`/`jobs/act`/`create-env-var-secret-files`. At its default, behavior is
+byte-for-byte identical to before this parameter existed. Pointed at a different CircleCI env var
+name, `create-env-var-secret-files.sh` aliases that variable's *value* into the secrets bucket
+under the literal key `GITHUB_TOKEN` (and keeps the source variable's own name out of the plaintext
+`.env` file), so Act and the wrapped Action still see a plain `GITHUB_TOKEN` with zero interface
+change on either side.
+
+**Why the seam exists, not just "because someone might want it":** CircleCI's Sources of Change
+team already mints scoped GitHub App installation tokens tied to pipeline-trigger time --
+`TokenRestrictions{Scopes, RepositoryIDs}` passed into `CreateAndStoreTokenForPipeline` in
+`soc-integrations`. That is materially closer to real GitHub Actions' own per-job `GITHUB_TOKEN`
+behavior (auto-scoped, tied to a specific trigger) than the static personal-access-token workaround
+this orb's README already documents as a "weaker substitute, not a drop-in one." The only piece
+that mechanism doesn't yet do is expose one of those minted tokens into a CircleCI job's
+environment under some env var name a config author can reference.
+
+**What was deliberately NOT built in this pass:** any minting logic, any call into
+`soc-integrations`, any new CircleCI platform feature. This orb has no way to originate a
+pipeline-scoped token itself, and building that is a platform-level project, not an orb change.
+This pass only adds the *consumption* side of that future integration -- the aliasing seam -- so
+that whenever (if ever) a minted token becomes available as a job env var by some other mechanism,
+pointing `github-token` at its name is the entire integration step required on this orb's side.
+
+**If someone picks this up:** the actual work is on the platform side (exposing a
+`CreateAndStoreTokenForPipeline`-minted token into a job's environment, and deciding the trust
+boundary/scoping UX for who can request one for a given pipeline) -- not here. Once that exists,
+this orb needs no further change; `github-token` already does its half of the job.

@@ -187,6 +187,19 @@ store as a CircleCI project/context env var -- which is broader in scope than th
 not auto-expire, is not automatically narrowed by a workflow's own `permissions:` block, and must
 be rotated by you. Scope it to the minimum you actually need and rotate it on a schedule.
 
+**The `github-token` parameter is a seam, not a mint.** By default it names `GITHUB_TOKEN` --
+identical behavior to today. Point it at a *different* CircleCI env var name (e.g. one populated by
+a future pipeline-scoped token-minting step) and this orb aliases that variable's value into the
+secrets bucket under the literal key `GITHUB_TOKEN` for you, and keeps the source variable's own
+name out of the plaintext `.env` file automatically -- so Act and the wrapped Action still see a
+plain `GITHUB_TOKEN`, with zero interface change on either side. This orb implements only the
+aliasing; it mints nothing itself. CircleCI's Sources of Change team already mints scoped GitHub
+App installation tokens tied to pipeline-trigger time (`TokenRestrictions{Scopes, RepositoryIDs}`,
+`CreateAndStoreTokenForPipeline` in `soc-integrations`) -- the only missing piece to get much
+closer to real GitHub Actions' own per-job token behavior is exposing one of those into a job's
+environment under some other env var name and pointing `github-token` at it. See
+`docs/ROADMAP.md` for the fuller rationale.
+
 **The env/secret/var files this orb generates for Act are opt-in secret, not opt-out.** By
 default only `GITHUB_TOKEN` is treated as sensitive (the `secrets` parameter); every other
 environment variable present in the job is written to the **plaintext** `.env` file Act reads
@@ -293,6 +306,19 @@ We welcome [issues](https://github.com/CircleCI-Labs/act-orb/issues) to and [pul
 Every script in `src/scripts/` is enforced clean by `shellcheck` (`severity: error`) and `shfmt
 -i 4 -ci -sr` in CI. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for larger items that were
 deliberately scoped out of past passes, with the reasoning recorded rather than lost.
+
+**CircleCI CLI version floor: `>= 1.0.48254`.** Older CLI builds silently pack this orb's
+`<<include(...)>>` directives as literal text instead of expanding them, producing a broken orb
+that can still pass `circleci orb validate` -- a false green with no other symptom. Run
+`scripts/check-circleci-cli-version.sh` (also wired into `.circleci/config.yml`'s `lint-pack`
+workflow) before packing locally if you're not sure which build you have.
+
+**`pre-steps`/`post-steps` are reserved job-parameter names.** `circleci orb validate` rejects a
+job parameter literally named `pre-steps` or `post-steps` outright -- this only surfaces under
+`orb validate`, which needs a token, so a plain `circleci config validate`/pack will not catch it.
+If you're adding a new job parameter, don't pick either name. (This orb has never had a
+before/after-steps-style hook parameter to collide with this, but a future job parameter still
+could.)
 
 ## How to Publish An Update
 1. Merge pull requests with desired changes to the main branch.

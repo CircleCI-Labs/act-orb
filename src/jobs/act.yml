@@ -45,6 +45,15 @@ parameters:
     type: string
     default: ""
     description: A comma-separated list of variables treated as ${{ vars.VARIABLE }}
+  github-token:
+    type: env_var_name
+    default: GITHUB_TOKEN
+    description: >
+      Name of the CircleCI env var (project or context env var) holding the GitHub
+      token Act/the wrapped Action should see. Defaults to `GITHUB_TOKEN` -- the exact
+      same behavior as today. A seam only, for a future CircleCI-platform-minted,
+      scoped, short-lived token to be injected under a different env var name with no
+      interface change; see the README's "Security notes" for the full rationale.
   workflow-file:
     type: string
     default: /tmp/workflow.yml
@@ -243,6 +252,7 @@ steps:
       secrets: << parameters.secrets >>
       var-file: << parameters.var-file >>
       variables: << parameters.variables >>
+      github-token: << parameters.github-token >>
       workflow-file: << parameters.workflow-file >>
       uses: << parameters.uses >>
       id: << parameters.id >>

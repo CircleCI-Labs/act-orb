@@ -131,6 +131,38 @@ jobs:
               image: redis:7-alpine
           force-install: false
           debug: true
+  # Regression coverage for the new github-token seam: pointed at a
+  # differently-named env var, create-env-var-secret-files must alias that
+  # variable's VALUE into the secrets bucket under the literal key
+  # GITHUB_TOKEN, and must NOT leak the source variable's own name into the
+  # plaintext env file, even though it's not itself on the (deliberately
+  # emptied, for this test) `secrets` list.
+  test_github_token_seam:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - run:
+          name: Seed a differently-named token env var
+          command: echo 'export CCI_MINTED_GH_TOKEN=totally-a-seam-value' >> "$BASH_ENV"
+      - act/create-env-var-secret-files:
+          env-file: /tmp/seam-test.env
+          secret-file: /tmp/seam-test.secrets
+          var-file: /tmp/seam-test.vars
+          secrets: ""
+          github-token: CCI_MINTED_GH_TOKEN
+      - run:
+          name: Assert the seam aliased CCI_MINTED_GH_TOKEN into GITHUB_TOKEN
+          command: |
+            if ! grep -qx 'GITHUB_TOKEN=totally-a-seam-value' /tmp/seam-test.secrets; then
+              echo "Expected GITHUB_TOKEN=totally-a-seam-value in /tmp/seam-test.secrets" >&2
+              cat /tmp/seam-test.secrets >&2 || true
+              exit 1
+            fi
+            if grep -q '^CCI_MINTED_GH_TOKEN=' /tmp/seam-test.env 2>/dev/null; then
+              echo "CCI_MINTED_GH_TOKEN leaked into the plaintext env file" >&2
+              exit 1
+            fi
+            echo "OK: github-token seam aliased correctly and did not leak the source var"
 
 workflows:
   test-deploy:
@@ -151,6 +183,9 @@ workflows:
           filters: *filters
       - test_service_containers:
           name: Testing Service Containers
+          filters: *filters
+      - test_github_token_seam:
+          name: Testing github-token Seam
           filters: *filters
       - act/act:
           name: Testing Overriding Executor
@@ -183,6 +218,7 @@ workflows:
             - "Testing Stale Outputs Guard"
             - "Testing id/inputs Aliases"
             - "Testing Service Containers"
+            - "Testing github-token Seam"
             - "Testing Overriding Executor"
             - "Testing Running Workflow File"
       - orb-tools/publish:
