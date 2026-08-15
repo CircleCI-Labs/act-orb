@@ -110,3 +110,57 @@ This pass added a pinned `mvdan/shfmt:v3.13.1-alpine` CI job (`shfmt-check` in
 script in this repo was verified locally against that exact binary/flag combination before this
 branch was committed. This is not deferred -- it's called out here only so a future contributor
 knows the gate is real and was actually exercised, not just declared.
+
+## 6. `GITHUB_*` -> `CIRCLE_*` context-variable translation
+
+**What it would do:** map CircleCI's own build-context env vars (`CIRCLE_SHA1`, `CIRCLE_BRANCH`,
+`CIRCLE_PROJECT_REPONAME`, etc.) onto the `GITHUB_*` context vars
+(`GITHUB_SHA`, `GITHUB_REF`, `GITHUB_REPOSITORY`, `GITHUB_ACTOR`, ...) a wrapped action or its
+`env:`/`with:` expressions might expect, the same way a real GitHub Actions runner would populate
+them.
+
+**Why it's deferred (for now), not built:** this orb sets zero `GITHUB_*` variables itself --
+confirmed by grepping every script and command YAML in `src/` for `GITHUB_`. It doesn't need to:
+Act's own runner emulation already populates the common ones (`GITHUB_ACTIONS`, `GITHUB_WORKSPACE`,
+`GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_REF`, `GITHUB_ACTOR`, `GITHUB_EVENT_NAME`,
+`GITHUB_EVENT_PATH`, ...) itself, derived from the real git checkout this orb hands it (`checkout`
++ `--bind`) and the `actor`/`workflow-event`/event-file parameters already exposed on `act/act`.
+Nothing in this repo previously recorded *that this was considered* versus simply never noticed --
+this entry closes that silent gap. A caller who needs a `GITHUB_*` var Act doesn't set on its own
+(e.g. something derived from a GitHub-specific concept CircleCI has no equivalent of, like
+`GITHUB_RUN_ID` semantics tied to GitHub's own run numbering) can still set it explicitly via this
+command's `env` parameter today -- no orb change needed for that case either.
+
+**If someone picks this up:** the actual work here isn't building a translation layer, it's an
+audit -- diff the full `GITHUB_*` context-variable list
+([docs.github.com — variables reference](https://docs.github.com/en/actions/learn-github-actions/variables))
+against what Act's runner emulation actually sets (verify by running a probe action that dumps
+`env | grep ^GITHUB_` through `act/act` and comparing), and only then decide whether any specific
+gap is worth an orb parameter versus just documenting "set it yourself via `env`."
+
+## 7. Skipping the installer round-trip on a full `cache-cli` hit
+
+**What it would do:** when `cache-cli` fully restores the `act` binary and `version` is pinned
+(not `"latest"`) with `force-install: false`, skip fetching/checksumming/`sudo`-running the
+installer script entirely instead of invoking it and letting it no-op after its own version check.
+
+**Why it's deferred:** the reinstall-skip logic this would need to reimplement --
+`check_installed_version()` in nektos/act's own `install.sh` -- already exists, and is exactly the
+feature this project's own maintainer wrote and upstreamed in
+[nektos/act#2575](https://github.com/nektos/act/pull/2575) (see the supply-chain audit above for
+the history). Duplicating that check inside this orb's `install.sh` means re-parsing `act
+--version` output and re-implementing "latest"-vs-pinned comparison logic a second time, in a
+second place, that can silently drift from upstream's own if either side's version-string handling
+changes -- for a modest win (skip one small, already-pinned-and-checksummed script fetch plus one
+`sudo bash` invocation that itself does almost nothing on a cache hit). Not worth the duplication
+risk for this pass.
+
+**What shipped instead:** nothing extra -- the existing pinned+checksummed fetch (see the
+supply-chain section of `install.sh` itself) already keeps the per-job cost small (one small file
+fetch, checksum-verified, then a `sudo bash` invocation that itself no-ops quickly once inside
+nektos/act's own installer), and `cache-cli` already avoids the actual binary download on a hit.
+
+**If someone picks this up:** the safer version of this optimization is upstream, not here -- e.g.
+`check_installed_version()` short-circuiting before even reading its own network-fetch code path
+when the binary present matches `-v` faster than it does today -- rather than a second,
+orb-side copy of the same check that has to be kept in sync by hand.

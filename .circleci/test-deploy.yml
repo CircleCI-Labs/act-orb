@@ -2,7 +2,7 @@ version: 2.1
 orbs:
   # Your orb will be automatically injected here during the pipeline.
   # Reference your orb's jobs and commands below as they will exist when built.
-  orb-tools: circleci/orb-tools@12.3.0
+  orb-tools: circleci/orb-tools@12.5.0
   # The orb definition is intentionally not included here. It will be injected into the pipeline.
   act: {}
 
@@ -35,6 +35,61 @@ jobs:
             hello-world: "example-value"
           force-install: false
           debug: true
+  # Regression coverage for the `outputs` feature (added for family parity):
+  # asserts the action's real `time` output (see its action.yml) actually
+  # lands in $BASH_ENV as a plain shell variable, not just that the job
+  # exits zero.
+  test_output_capture:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - setup_remote_docker
+      - act/act:
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          outputs: "time"
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the action's output was captured into $BASH_ENV
+          command: |
+            if [ -z "${time:-}" ]; then
+              echo "Expected \$time to be set by act/act's 'outputs' capture, but it was empty/unset." >&2
+              exit 1
+            fi
+            echo "Captured action output: time=$time"
+  # Regression coverage for the family-consistent `id`/`inputs` aliases
+  # (added for family parity): exercises them as the *only* way the action
+  # is specified, rather than alongside `uses`/`with`.
+  test_id_inputs_aliases:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - setup_remote_docker
+      - act/act:
+          id: actions/hello-world-javascript-action@v1.1
+          inputs: |
+            who-to-greet: "Mona the Octocat"
+          force-install: false
+          debug: true
+  # Regression coverage for the `services` passthrough (added for family
+  # parity): verifies the generated workflow's `services:` block is valid
+  # YAML that Act actually accepts and runs against, end to end.
+  test_service_containers:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - setup_remote_docker
+      - act/act:
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          services: |
+            redis:
+              image: redis:7-alpine
+          force-install: false
+          debug: true
 
 workflows:
   test-deploy:
@@ -43,6 +98,15 @@ workflows:
       # Test your orb's commands in a custom job and test your orb's jobs directly as a part of this workflow.
       - run_on_remote_docker:
           name: Testing Remote Docker
+          filters: *filters
+      - test_output_capture:
+          name: Testing Output Capture
+          filters: *filters
+      - test_id_inputs_aliases:
+          name: Testing id/inputs Aliases
+          filters: *filters
+      - test_service_containers:
+          name: Testing Service Containers
           filters: *filters
       - act/act:
           name: Testing Overriding Executor
@@ -71,6 +135,9 @@ workflows:
           filters: *filters
           requires:
             - "Testing Remote Docker"
+            - "Testing Output Capture"
+            - "Testing id/inputs Aliases"
+            - "Testing Service Containers"
             - "Testing Overriding Executor"
             - "Testing Running Workflow File"
       - orb-tools/publish:

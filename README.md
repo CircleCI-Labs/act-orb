@@ -65,6 +65,24 @@ but they were previously undocumented, so a user reading only Act's own docs wou
 Override any of these via the matching orb parameter (`pull`, `rebuild`, `reuse`, `bind`,
 `detect-event`, `action-offline-mode`) if your workflow needs Act's own default instead.
 
+## Caching
+
+This orb caches three independent things, each on and off separately, because each is a genuinely
+different artifact with a different cost/benefit tradeoff:
+
+| Dimension | Parameter | Default | What's cached | Cache key |
+|---|---|---|---|---|
+| The `act` CLI binary itself | `cache-cli` | on | `<bin-dir>/act` | arch + resolved Act version (`"latest"` is resolved to a concrete tag via the GitHub API before being used as a key, so a `"latest"` pin still gets fresh cache hits/misses as new versions ship, rather than sticking to whatever "latest" meant on the first run) |
+| Act's downloaded-actions directory | `cache-actions` | on | `~/.cache/act` (the actions/dependencies Act itself fetched) | arch + `cache-key-prefix` + CircleCI project ID + job name |
+| The platform Docker image | `cache-images` | **off** | a `docker save`'d tar of the platform image (see `platform`) | arch + `platform` + `cache-key-prefix` |
+
+`cache-images` defaults to off because Docker image tars are large relative to the other two
+artifacts and remote-docker/executor image pulls are often already fast on CircleCI's own image
+cache -- turn it on if your platform image is unusually large or slow to pull in your environment.
+
+All three cache keys share the `cache-key-prefix` parameter (default `v1`) as a common prefix, so
+bumping it busts every cache dimension at once if you ever need a clean slate across all of them.
+
 ## Capturing action outputs
 
 Set `outputs` to a comma-separated list of the wrapped action's own output keys (matching its
