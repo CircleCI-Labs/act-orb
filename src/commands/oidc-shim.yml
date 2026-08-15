@@ -1,0 +1,105 @@
+description: >
+  Starts a local OIDC-token shim so a GitHub Action running under `act/act`/`act/run-act`
+  can call `core.getIDToken()` (or any wrapper of it, e.g. `aws-actions/configure-aws-credentials`)
+  and receive a real, CircleCI-signed OpenID Connect token -- Act itself does not implement
+  GitHub's OIDC token issuance (see the README's "What does not work" section). Run this command
+  as a step *before* `act/act`/`act/run-act` in the same job; it composes with them automatically
+  by exporting ACTIONS_ID_TOKEN_REQUEST_URL/ACTIONS_ID_TOKEN_REQUEST_TOKEN for the rest of the job
+  (see the README's "OIDC token issuance for wrapped Actions" section for the full explanation,
+  the one-time customer-side IAM setup, and a worked AWS example).
+
+parameters:
+  enabled:
+    type: boolean
+    default: true
+    description: >
+      Kill switch. When false, this command does nothing at all (no server, no exported env
+      vars) -- lets you toggle OIDC support via a pipeline parameter without removing the step.
+  port:
+    type: integer
+    default: 8990
+    description: >
+      TCP port the shim listens on inside this job. Change it only if 8990 collides with
+      something else already running in the same job.
+  bind-host:
+    type: string
+    default: "0.0.0.0"
+    description: >
+      Socket bind address. Deliberately NOT loopback-only by default, because sibling containers
+      require it -- see the README's "Why not loopback" note: when the wrapped action runs inside
+      Act's own spawned container (the normal case), that container is a sibling of whatever
+      process started this shim, in its own network namespace, so a loopback-only bind is
+      unreachable from it (measured directly on real CircleCI infra, not just reasoned about).
+      Because the bind can't be narrowed to loopback, this is NOT the shim's auth boundary: every
+      token-minting request must separately present the per-job request token this command
+      generates (enforced with a constant-time comparison; see the README's Security notes), and
+      that token -- not network position -- is what actually gates who can mint a cloud
+      credential. Advertised reachability is controlled separately by `advertise-host`; this
+      parameter only controls what this shim's own socket binds to.
+  advertise-host:
+    type: string
+    default: "auto"
+    description: >
+      Address written into ACTIONS_ID_TOKEN_REQUEST_URL for the action's process to connect
+      to. "auto" (the default) detects it at runtime: the Docker bridge gateway address if this
+      job can see a local Docker daemon (default `machine` executor topology), else this job's
+      own container's bridge IP via `docker inspect` (docker executor + `setup_remote_docker`
+      topology), else a last-resort host IP with a loud warning. Set this explicitly if
+      auto-detection is wrong for your executor/networking setup.
+  audience-allowlist:
+    type: string
+    default: ""
+    description: >
+      Comma-separated exact-match allow-list of `aud` values this shim will mint tokens for.
+      Empty (the default) allows any audience. Defense in depth only, layered on top of the real
+      security boundary -- see the README's Security notes: the real boundary is the per-job
+      request token every request must present, verified with a constant-time comparison before
+      any audience is even looked at. Set this if you want to additionally bound which audiences
+      an already-authenticated-but-misbehaving caller in the same job could obtain a token for.
+  startup-timeout:
+    type: integer
+    default: 10
+    description: >
+      Maximum seconds to wait for the shim to report healthy before failing this step (so a
+      later step can never race an OIDC request against a shim that never started).
+  mint-timeout:
+    type: integer
+    default: 20
+    description: >
+      Maximum seconds the shim will wait for a single `circleci run oidc get` invocation before
+      answering the action's request with a 500. Guards against a hung mint command hanging the
+      whole shim for that one request (other concurrent requests to other audiences are
+      unaffected -- each is handled on its own thread).
+  circleci-bin:
+    type: string
+    default: "circleci"
+    description: >
+      Name/path of the CircleCI job-runtime CLI binary to shell out to. This is the CLI baked
+      into CircleCI's own docker/machine executor images, not the general-purpose orb-authoring
+      `circleci` CLI installed on a laptop -- see the README. Override only if it is not on PATH
+      under its usual name.
+  state-dir:
+    type: string
+    default: "/tmp/.oidc-shim"
+    description: Directory this command uses for the generated server script, its log, and its pidfile.
+  step-name:
+    type: string
+    default: Start OIDC shim
+    description: Allows customizing the name of the step that starts the shim.
+
+steps:
+  - run:
+      name: << parameters.step-name >>
+      environment:
+        ORB_VAL_ENABLED: << parameters.enabled >>
+        ORB_VAL_PORT: << parameters.port >>
+        ORB_VAL_BIND_HOST: << parameters.bind-host >>
+        ORB_VAL_ADVERTISE_HOST: << parameters.advertise-host >>
+        ORB_VAL_AUDIENCE_ALLOWLIST: << parameters.audience-allowlist >>
+        ORB_VAL_STARTUP_TIMEOUT: << parameters.startup-timeout >>
+        ORB_VAL_MINT_TIMEOUT: << parameters.mint-timeout >>
+        ORB_VAL_CIRCLECI_BIN: << parameters.circleci-bin >>
+        ORB_VAL_STATE_DIR: << parameters.state-dir >>
+      command: |
+        <<include(scripts/lib/is_true.sh)>>
+        <<include(scripts/oidc-shim-start.sh)>>
