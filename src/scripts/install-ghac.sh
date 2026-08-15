@@ -14,9 +14,9 @@ set -euo pipefail
 # commit containing the new binaries AND update both SHA256 values below to
 # match, together, in the same change.
 # ---------------------------------------------------------------------------
-GHAC_PINNED_COMMIT="a1c610e536c98a9c5593999d253b613dde43c8d8"
-GHAC_AMD64_SHA256="cbfb7d08a47b70353ed96cf2417754421b062d26ebd54736e6de5fecbee6fef6"
-GHAC_ARM64_SHA256="7e30b8763a123aae2aaacac00cad05fb2de2ad7d91af4ef9da58bea5b1ca9656"
+GHAC_PINNED_COMMIT="2bfe0faa2050eee80e3d98b9ba294590afb339c2"
+GHAC_AMD64_SHA256="4fdcca8d4350ab9cdbb98fa3adee495da18996938d0ff239d4234879531dcfcb"
+GHAC_ARM64_SHA256="5d88595a4005182f4461c2cab1f8d53a1b8b98d5b506eb461c4651f3e76f7282"
 
 sha256_of() {
     if command -v sha256sum > /dev/null 2>&1; then
