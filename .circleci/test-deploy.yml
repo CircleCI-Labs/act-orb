@@ -59,6 +59,47 @@ jobs:
               exit 1
             fi
             echo "Captured action output: time=$time"
+  # Regression coverage for the stale-outputs guard: a second act/act call in
+  # the same job, with skip-create-workflow-file: true (so nothing
+  # regenerates or truncates the handoff file this call), must not leave a
+  # leftover handoff file from the first call's `outputs` capture sitting
+  # around for `collect-outputs` to silently re-read as if it were fresh.
+  test_stale_outputs_guard:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - setup_remote_docker
+      - act/act:
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          outputs: "time"
+          force-install: false
+          debug: true
+      - run:
+          name: Sanity check the first call's output capture landed
+          command: |
+            if [ -z "${time:-}" ]; then
+              echo "Expected \$time to be set by the first act/act call's 'outputs' capture, but it was empty/unset." >&2
+              exit 1
+            fi
+            echo "First call captured: time=$time"
+      - act/act:
+          workflow-file: .github/workflows/hello-world.yml
+          skip-create-workflow-file: true
+          outputs: "time"
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the first call's handoff file was not left over for a silent re-read
+          command: |
+            if [ -f .act-orb-outputs.env ]; then
+              echo "A stale .act-orb-outputs.env file from the first act/act call was still" >&2
+              echo "present after a second call with skip-create-workflow-file: true. The" >&2
+              echo "guard that removes it before Act runs did not fire." >&2
+              exit 1
+            fi
+            echo "No stale outputs handoff file present after the second call -- guard is working."
   # Regression coverage for the family-consistent `id`/`inputs` aliases
   # (added for family parity): exercises them as the *only* way the action
   # is specified, rather than alongside `uses`/`with`.
@@ -102,6 +143,9 @@ workflows:
       - test_output_capture:
           name: Testing Output Capture
           filters: *filters
+      - test_stale_outputs_guard:
+          name: Testing Stale Outputs Guard
+          filters: *filters
       - test_id_inputs_aliases:
           name: Testing id/inputs Aliases
           filters: *filters
@@ -136,6 +180,7 @@ workflows:
           requires:
             - "Testing Remote Docker"
             - "Testing Output Capture"
+            - "Testing Stale Outputs Guard"
             - "Testing id/inputs Aliases"
             - "Testing Service Containers"
             - "Testing Overriding Executor"

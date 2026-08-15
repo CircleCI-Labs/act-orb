@@ -92,19 +92,27 @@ parameters:
     description: Specifies a specific job ID to run
   pull:
     type: boolean
-    default: false
+    default: true
     description: >
-      Forces pulling of Docker images even if already present. NOTE: Act's own CLI default for
-      --pull is true; this orb defaults to false (a deliberate deviation, chosen for CircleCI's
-      fresh-VM-per-job model where the image was likely just pulled/cached this run) to avoid
-      pulling on every single job. See the README's "Defaults that deviate from Act" section.
+      Forces pulling of Docker images even if already present. Matches Act's own CLI default
+      (`true`) when this command is used standalone -- unlike every other parameter here, this
+      one is deliberately left at Act's own default rather than one of this orb's own, because
+      `run-act` is itself a published, directly-callable command (see the README: "Use the
+      `act/act` command instead of the job if you need to run it inside your own
+      executor/job") and flipping its standalone default would silently change behavior for
+      any existing caller who never sets `pull`. The `act`/`jobs/act` entry points explicitly
+      pass `pull: false` by default instead (tuned for CircleCI's fresh-VM-per-job model, where
+      the image was likely just pulled/cached this run) -- see the README's "Defaults that
+      deviate from Act" section. That override is explicit at the `act`/`jobs/act` layer and
+      does not change this command's own default.
   rebuild:
     type: boolean
-    default: false
+    default: true
     description: >
-      Rebuilds local Docker images even if already present. NOTE: Act's own CLI default for
-      --rebuild is true; this orb defaults to false for the same reason as `pull` above. See the
-      README's "Defaults that deviate from Act" section.
+      Rebuilds local Docker images even if already present. Matches Act's own CLI default
+      (`true`) when this command is used standalone, for the same reason as `pull` above. The
+      `act`/`jobs/act` entry points explicitly pass `rebuild: false` by default instead -- see
+      the README's "Defaults that deviate from Act" section.
   remote-name:
     type: string
     default: origin
@@ -170,6 +178,8 @@ steps:
         ORB_VAL_INPUT_FILE: <<parameters.input-file>>
         ORB_VAL_VAR_FILE: <<parameters.var-file>>
         ORB_VAL_ADDITIONAL_ACT_FLAGS: <<parameters.additional-act-flags>>
+        ORB_VAL_OUTPUTS: <<parameters.outputs>>
+        ORB_VAL_OUTPUTS_FILE: <<parameters.outputs-file>>
       command: <<include(scripts/run-act.sh)>>
   - when:
       condition:

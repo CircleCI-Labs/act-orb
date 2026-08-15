@@ -65,6 +65,12 @@ but they were previously undocumented, so a user reading only Act's own docs wou
 Override any of these via the matching orb parameter (`pull`, `rebuild`, `reuse`, `bind`,
 `detect-event`, `action-offline-mode`) if your workflow needs Act's own default instead.
 
+This table describes the `act`/`jobs/act` entry points, which pass all six explicitly. If you call
+the lower-level `act/run-act` **command** directly (see the Quick Start note above on when to use
+it), `pull` and `rebuild` fall back to Act's own default (`true`) rather than this table's `false`
+when you don't set them -- `run-act` is a published command in its own right, so its standalone
+default is kept stable rather than silently changed underneath any existing direct caller.
+
 ## Caching
 
 This orb caches three independent things, each on and off separately, because each is a genuinely
@@ -82,6 +88,14 @@ cache -- turn it on if your platform image is unusually large or slow to pull in
 
 All three cache keys share the `cache-key-prefix` parameter (default `v1`) as a common prefix, so
 bumping it busts every cache dimension at once if you ever need a clean slate across all of them.
+
+**Upgrade note:** the `cache-actions` key format changed in this release (a stray double dash
+before `{{ .Environment.CIRCLE_JOB }}` was fixed to a single dash). Cache keys are literal
+strings, not patterns, so this is a one-time, self-healing change: your existing actions cache
+under the old key becomes unreachable, `restore_cache` falls through to the unversioned prefix key
+(or a cold cache on the very next run), and a fresh cache is saved under the corrected key from
+then on. Nothing breaks -- expect one slower "Restoring cache for Act's Actions..." step after
+upgrading, not a caching regression.
 
 ## Capturing action outputs
 
@@ -109,6 +123,21 @@ is the mechanism that actually works. This means `outputs` only works when this 
 the workflow file (`skip-create-workflow-file` unset) and `bind` stays enabled (the default). If
 you bring your own workflow file, you can still reach `$BASH_ENV` yourself using the same pattern
 this orb generates.
+
+Violating either requirement does not error -- it fails silently, so know the actual behavior:
+
+- **`bind: false` with `outputs` set:** the container's handoff-file write never reaches the
+  CircleCI host, so `collect-outputs` finds nothing and no-ops. This orb logs a warning to that
+  effect; no output is exported and no later step's use of the variable will resolve.
+- **`skip-create-workflow-file: true` with `outputs` set:** nothing generates the output-capture
+  step in your hand-written workflow, so Act never (re)writes the handoff file on this call. Every
+  `act/act`/`run-act` invocation that requests `outputs` removes any handoff file left over from
+  an *earlier* call in the same job/`directory` before it runs, specifically so this case can never
+  silently re-export a previous call's stale value -- but it still cannot produce a *fresh* value
+  from a workflow file that doesn't write one, since Act's own `$GITHUB_OUTPUT` per-step temp area
+  isn't shared with the host even with `bind` on. Add the same "collect outputs for CircleCI" step
+  this orb generates (see the source of `create-workflow-file.sh`) to your own workflow file if you
+  need `outputs` alongside `skip-create-workflow-file`.
 
 Output keys containing characters that aren't legal in a shell variable name (GitHub allows `-` in
 output ids; bash does not) are exported under a sanitized name (dashes -> underscores) with a
@@ -139,6 +168,16 @@ A native translation to a CircleCI secondary Docker image (CircleCI's own equiva
 no Act emulation needed) is a larger, job-level design change -- see `docs/ROADMAP.md`.
 
 ## Security notes
+
+**`with`/`env`/`services` are trusted, unescaped input.** This orb builds the generated workflow
+file by embedding these parameters' raw string values directly into generated YAML (indented to
+fit, but not otherwise escaped). This matches how `config.yml` itself already trusts a job's own
+parameter values, but it's worth stating plainly now that `services` extends the same pattern to
+a third parameter: if any of `with`/`env`/`services` are ever populated from a source you don't
+control (e.g. a CircleCI pipeline parameter fed by a webhook payload or a PR title), a crafted
+value could break out of its intended YAML block and inject arbitrary keys/steps into the
+generated workflow. Treat these the same as any other config-author-trusted value -- don't wire
+untrusted external input into them directly.
 
 **`GITHUB_TOKEN` is a weaker substitute, not a drop-in one.** Real GitHub Actions' `GITHUB_TOKEN`
 is a per-job GitHub App installation token, auto-scoped to exactly one repository and

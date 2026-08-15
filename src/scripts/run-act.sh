@@ -15,6 +15,23 @@ if [ ! -f "${ORB_VAL_WORKFLOW_FILE}" ]; then
     exit 1
 fi
 
+# Guard against a stale output-handoff file being silently re-read by
+# `collect-outputs` after this call. The handoff file is normally
+# truncated by `create-workflow-file`'s own generated step, but that step
+# is skipped whenever `skip-create-workflow-file: true` -- e.g. a
+# hand-written workflow file, or a second `act/act`/`run-act` call reusing
+# the same `directory` in the same job. Removing it here, unconditionally
+# whenever `outputs` is requested and regardless of who generated the
+# workflow file, means a leftover file from an earlier call can never be
+# mistaken for this call's own (possibly absent) output.
+if [ -n "${ORB_VAL_OUTPUTS:-}" ]; then
+    OUTPUTS_PATH="${ORB_VAL_DIRECTORY%/}/${ORB_VAL_OUTPUTS_FILE:-.act-orb-outputs.env}"
+    rm -f "${OUTPUTS_PATH}"
+    if ! is_true "${ORB_VAL_BIND}"; then
+        echo "Warning: 'outputs' is set but 'bind' is false -- the container's output handoff file can never reach the CircleCI host this way, so no outputs will be collected this run. Set bind: true (the default) to use 'outputs'." >&2
+    fi
+fi
+
 # Build `act`'s argv as an array and exec it directly, rather than
 # concatenating a string and `eval`-ing it. Any parameter sourced from a
 # CircleCI pipeline parameter (rather than a literal in config.yml) --
