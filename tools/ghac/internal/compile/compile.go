@@ -15,7 +15,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const actOrbVersion = "cci-labs/act@1.0.5" // pinned to the version this compiler was verified against
+// actOrbVersion pins the act orb version the generated config's `act/act`
+// and `act/gha-render-job` steps resolve against. Provisionally the dev tag
+// this feature itself ships under (cci-labs/act@dev:upgrade-bridge-family-parity)
+// -- `act/gha-render-job` does not exist in any published stable release yet
+// (this compiler and that command landed together), so a stable version pin
+// would make every compiled config fail to resolve. TODO once this lands on
+// main and gets a real release: bump this to that stable version and drop
+// the "provisionally" above -- tracked in tools/ghac/README.md.
+const actOrbVersion = "cci-labs/act@dev:upgrade-bridge-family-parity"
 
 // Job is one compiled GitHub Actions job.
 type Job struct {

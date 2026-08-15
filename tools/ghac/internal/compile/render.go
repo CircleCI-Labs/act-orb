@@ -5,14 +5,6 @@ import (
 	"sort"
 )
 
-// ghacInstallCmd is how each real job fetches the compiler binary at runtime.
-// Placeholder URL — no release has actually been cut for this prototype (see
-// README "What is NOT verified"). Mirrors cci-labs/act's own `install`
-// command shape (pinned version, curl a static binary, chmod +x) rather than
-// inventing a new install pattern.
-const ghacInstallCmd = `curl -fsSL "https://github.com/circleci-labs/gha-compiler/releases/download/v0.1.0/ghac_linux_amd64" -o /usr/local/bin/ghac
-chmod +x /usr/local/bin/ghac`
-
 // buildCircleCIConfig renders the whole continued config.yml: one CircleCI
 // job per GitHub job, and one workflow wiring requires:/filters: from
 // needs:/if:.
@@ -81,18 +73,14 @@ func renderJob(b *indentBuf, j *Job) {
 		}
 	}
 
-	b.line(3, "- run:")
-	b.line(5, `name: "Install ghac (workflow compiler)"`)
-	b.line(5, "command: |")
-	for _, l := range splitLines(ghacInstallCmd) {
-		b.line(6, "%s", l)
-	}
-
-	b.line(3, "- run:")
-	b.line(5, `name: "Render this job's workflow file from .github/workflows"`)
-	b.line(5, "command: |")
-	b.line(6, "mkdir -p /tmp/act-workflows")
-	b.line(6, "ghac render-job --in %s --job %s --out /tmp/act-workflows/%s.yml", sourceWorkflowRelPath, j.ID, j.ID)
+	// act/gha-render-job installs ghac (pinned-commit, checksum-verified
+	// fetch — see tools/ghac/README.md and src/scripts/install-ghac.sh)
+	// and re-derives this job's needs:-stripped, needs.*.outputs.*-rewritten
+	// file itself; no separate "install ghac" step is needed here.
+	b.line(3, "- act/gha-render-job:")
+	b.line(5, "workflow-file: %s", sourceWorkflowRelPath)
+	b.line(5, "job: %s", j.ID)
+	b.line(5, "out: /tmp/act-workflows/%s.yml", j.ID)
 
 	b.line(3, "- act/act:")
 	b.line(5, "skip-create-workflow-file: true")
@@ -175,23 +163,6 @@ func SetSourceWorkflowRelPath(p string) {
 	if p != "" {
 		sourceWorkflowRelPath = p
 	}
-}
-
-func splitLines(s string) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		if r == '\n' {
-			out = append(out, cur)
-			cur = ""
-			continue
-		}
-		cur += string(r)
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
 }
 
 // indentBuf is a tiny fixed-width-indent YAML writer. We hand-render the

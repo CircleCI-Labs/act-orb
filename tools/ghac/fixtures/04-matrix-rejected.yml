@@ -1,0 +1,13 @@
+name: matrix-rejected
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: npm test

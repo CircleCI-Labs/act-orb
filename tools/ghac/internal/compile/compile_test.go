@@ -147,7 +147,7 @@ func TestFixtures(t *testing.T) {
 				t.Errorf("%s: job[%d] = %q, want %q", c.file, i, j.ID, c.wantJobs[i])
 			}
 		}
-		if !strings.Contains(res.ConfigYAML, "cci-labs/act@1.0.5") {
+		if !strings.Contains(res.ConfigYAML, actOrbVersion) {
 			t.Errorf("%s: generated config doesn't pin the act orb version", c.file)
 		}
 	}
