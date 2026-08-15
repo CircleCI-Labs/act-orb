@@ -525,6 +525,7 @@ jobs:
     docker:
       - image: cimg/base:current
     steps:
+      - checkout
       - run:
           name: Hostile input - neither action/uses nor id set is rejected with the exact error
           command: |
@@ -599,6 +600,7 @@ jobs:
     docker:
       - image: cimg/base:current
     steps:
+      - checkout
       - run:
           name: Secrets-vs-variables conflict, and an injection regression via an embedded newline
           command: |
@@ -659,6 +661,7 @@ jobs:
     docker:
       - image: cimg/base:current
     steps:
+      - checkout
       - run:
           name: Missing handoff file is a safe no-op (exit 0, no error)
           command: |
