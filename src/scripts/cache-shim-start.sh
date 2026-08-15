@@ -13,7 +13,7 @@ is_true() {
 }
 
 if ! is_true "${ORB_VAL_ENABLED}"; then
-    echo "cache-shim: enabled=false, not starting. GITHUB_SERVER_URL/ACTIONS_CACHE_SERVICE_V2/ACTIONS_RESULTS_URL/ACTIONS_RUNTIME_TOKEN will not be set for later steps."
+    echo "cache-shim: enabled=false, not starting. ACTIONS_CACHE_SERVICE_V2/ACTIONS_RESULTS_URL/ACTIONS_RUNTIME_TOKEN will not be set for later steps."
     exit 0
 fi
 
@@ -712,14 +712,8 @@ fi
 #
 # Same $BASH_ENV-append convention this orb already uses for
 # oidc-shim/collect-outputs: these values are only known at runtime, and a
-# `run` step's own `environment:` block only scopes to that one step. Four
-# variables redirect an UNMODIFIED actions/cache at this shim (measured/
-# documented in the project's own working notes, not guessed):
-#   - GITHUB_SERVER_URL: actions/cache's isGhes()/getCacheServiceVersion()
-#     check its hostname against github.com/*.ghe.com/*.localhost --
-#     pointing it at a fake *.localhost host is what makes it treat this as
-#     "GitHub.com" (cache service v2 eligible) rather than a GHES instance
-#     (which would force it back to v1 and a different URL entirely).
+# `run` step's own `environment:` block only scopes to that one step. Three
+# variables redirect an UNMODIFIED actions/cache at this shim:
 #   - ACTIONS_CACHE_SERVICE_V2=true: selects the v2 (Twirp) code path this
 #     shim implements, over the older v1 REST shape.
 #   - ACTIONS_RESULTS_URL: the base URL actions/cache's Twirp client builds
@@ -729,13 +723,30 @@ fi
 #     set to this shim's own per-job REQUEST_TOKEN so the auth check in
 #     cache_shim_server.py's Handler is satisfied automatically, with zero
 #     extra wiring at the call site.
+#
+# GITHUB_SERVER_URL is deliberately NOT set here, even though
+# actions/cache's own isGhes() check reads it (a hostname ending in
+# *.LOCALHOST would make it treat this as GitHub.com rather than GHES).
+# This was tried first and broke something else entirely: Act's OWN
+# action-resolution logic ALSO reads GITHUB_SERVER_URL, from the SAME job
+# shell this variable would be exported into (via $BASH_ENV, which affects
+# every later step's shell -- including the one that runs `act` itself, not
+# just the wrapped action's own container). Setting it to a fake
+# *.localhost host made Act try to `git clone` the wrapped action FROM that
+# fake host and fail outright (`dial tcp: lookup cache-shim.localhost: no
+# such host`) -- confirmed live, in a real job, before this comment was
+# written. Leaving it unset is not a compromise: actions/cache's own
+# isGhes() defaults to `https://github.com` when the variable is absent
+# (see its own config.ts: `new URL(process.env['GITHUB_SERVER_URL'] ||
+# 'https://github.com')`), which is already "not GHES" -- exactly the
+# outcome the fake-hostname trick was trying to produce, with none of the
+# collateral damage to Act's own action fetching.
 if [ -z "${BASH_ENV:-}" ]; then
     echo "cache-shim: ERROR: \$BASH_ENV is not set. CircleCI always sets this for every job -- if you're seeing this, you're running this script outside a real CircleCI job." >&2
     exit 1
 fi
 
 {
-    printf 'export GITHUB_SERVER_URL=%q\n' "http://cache-shim.localhost"
     printf 'export ACTIONS_CACHE_SERVICE_V2=%q\n' "true"
     printf 'export ACTIONS_RESULTS_URL=%q\n' "http://${ADVERTISE_HOST}:${ORB_VAL_PORT}/"
     printf 'export ACTIONS_RUNTIME_TOKEN=%q\n' "${REQUEST_TOKEN}"

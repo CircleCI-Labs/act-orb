@@ -145,10 +145,19 @@ jobs:
 ```
 
 `act/cache-shim` must run in an earlier step of the **same job**, before `act/act`/`run-act`, for
-the same reason `act/oidc-shim` does: it exports `GITHUB_SERVER_URL`/`ACTIONS_CACHE_SERVICE_V2`/
-`ACTIONS_RESULTS_URL`/`ACTIONS_RUNTIME_TOKEN` into `$BASH_ENV`, which `act/act`'s own
-`create-env-var-secret-files` step picks up automatically with zero call-site wiring -- the same
-seam the `github-token` parameter and `act/oidc-shim` already use.
+the same reason `act/oidc-shim` does: it exports `ACTIONS_CACHE_SERVICE_V2`/`ACTIONS_RESULTS_URL`/
+`ACTIONS_RUNTIME_TOKEN` into `$BASH_ENV`, which `act/act`'s own `create-env-var-secret-files` step
+picks up automatically with zero call-site wiring -- the same seam the `github-token` parameter
+and `act/oidc-shim` already use. It deliberately does **not** also export `GITHUB_SERVER_URL`:
+an earlier version of this shim did (matching the naive reading of `actions/cache`'s own
+`isGhes()` check, which treats a `*.localhost` hostname as "not GHES"), and that broke real jobs
+outright -- Act's own action-resolution logic reads `GITHUB_SERVER_URL` from the exact same job
+shell (since `$BASH_ENV` affects every later step, not just the wrapped action's container) to
+decide where to `git clone` the wrapped action *from*, so a fake `*.localhost` value made Act try
+to clone `actions/cache` itself from that fake host and fail immediately (measured live: `dial
+tcp: lookup cache-shim.localhost: no such host`). Leaving the variable unset costs nothing:
+`actions/cache`'s own `isGhes()` already defaults to `https://github.com` (i.e. "not GHES") when
+it's absent.
 
 ### How the protocol translation works
 

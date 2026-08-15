@@ -5,8 +5,10 @@ description: >
   cache shim" section for the full protocol translation, and its own "Known, real gap" note
   before assuming a save actually persists. Run this command as a step *before* `act/act`/
   `act/run-act` in the same job; it composes with them automatically by exporting
-  `GITHUB_SERVER_URL`/`ACTIONS_CACHE_SERVICE_V2`/`ACTIONS_RESULTS_URL`/`ACTIONS_RUNTIME_TOKEN`
-  for the rest of the job, the same seam `act/oidc-shim` already uses for its own env vars.
+  `ACTIONS_CACHE_SERVICE_V2`/`ACTIONS_RESULTS_URL`/`ACTIONS_RUNTIME_TOKEN` for the rest of the
+  job, the same seam `act/oidc-shim` already uses for its own env vars. Deliberately does NOT
+  set `GITHUB_SERVER_URL` -- see `cache-shim-start.sh`'s own comments for why doing so broke
+  Act's own action-fetching in real testing, and why it isn't needed anyway.
 
 parameters:
   enabled:

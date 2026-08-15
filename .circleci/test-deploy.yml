@@ -287,6 +287,12 @@ jobs:
             mkdir -p cache-shim-test-dir
             echo "hello from cache-shim test, pipeline << pipeline.number >>" > cache-shim-test-dir/file.txt
       - act/act:
+          # checkout: false -- we already checked out once above, and the
+          # test-fixture file created in the previous step is untracked;
+          # act/act's own default (re-)checkout step can wipe untracked
+          # files created since the last real checkout (measured for real:
+          # this failed with the default before this fix).
+          checkout: false
           uses: actions/cache/save@v4
           with: |
             path: cache-shim-test-dir
@@ -294,6 +300,7 @@ jobs:
           force-install: false
           debug: true
       - act/act:
+          checkout: false
           uses: actions/cache/restore@v4
           with: |
             path: cache-shim-test-dir
@@ -348,6 +355,10 @@ jobs:
             mkdir -p artifact-test-dir
             echo "hello from artifact test, pipeline << pipeline.number >>" > artifact-test-dir/file.txt
       - act/act:
+          # See the cache-shim job's own comment: act/act's default
+          # (re-)checkout can wipe the untracked fixture file created just
+          # above; we already checked out once at the top of this job.
+          checkout: false
           uses: actions/upload-artifact@v4
           with: |
             name: cache-shim-test-artifact
