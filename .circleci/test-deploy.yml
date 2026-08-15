@@ -262,9 +262,107 @@ jobs:
             grep -q "machine: true" /tmp/generated-self-hosted-config.yml
             grep -q "resource_class: acme/linux-x64" /tmp/generated-self-hosted-config.yml
 
+  # TEMPORARY discovery probe, not a real test -- removed before this branch's
+  # cache-shim work is considered done. Learns, from a real job, the exact
+  # request contract of /tmp/circleci-ts.sock and $runner_host's
+  # /api/v2/output/cache-save + cache-restore endpoints before the shim's
+  # implementation locks in guesses. Every response is dumped in full
+  # (status + headers + body); the task token itself is redacted since it is
+  # a live credential, everything else is intentionally verbose.
+  probe_cache_shim_protocol:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - run:
+          name: Probe /tmp/circleci-ts.sock and the runner cache endpoints
+          command: |
+            set -uo pipefail
+            if [ ! -S /tmp/circleci-ts.sock ]; then
+              echo "No /tmp/circleci-ts.sock present on this job -- cannot probe." >&2
+              exit 1
+            fi
+            echo "=== Candidate paths against the unix socket ==="
+            for p in / /token /api/v1/token /task-token /v1/token /internal/token; do
+              echo "--- GET $p ---"
+              curl -s -o /tmp/resp.$$ -w 'HTTP %{http_code}\n' --unix-socket /tmp/circleci-ts.sock "http://localhost$p" || echo "(curl error $?)"
+              sed -E 's/"token"\s*:\s*"[^"]{0,12}[^"]*"/"token":"[REDACTED]"/' /tmp/resp.$$ 2>/dev/null
+              echo
+            done
+
+            echo "=== Locating the real token/runner_host response ==="
+            RESP=""
+            for p in / /token /api/v1/token /task-token /v1/token /internal/token; do
+              CAND="$(curl -s --unix-socket /tmp/circleci-ts.sock "http://localhost$p" 2>/dev/null || true)"
+              if echo "$CAND" | grep -q '"token"' && echo "$CAND" | grep -q 'runner_host'; then
+                RESP="$CAND"
+                echo "Found working path: $p"
+                break
+              fi
+            done
+            if [ -z "$RESP" ]; then
+              echo "Could not find a socket path returning {token, runner_host}. Trying POST on /." >&2
+              RESP="$(curl -s -X POST --unix-socket /tmp/circleci-ts.sock "http://localhost/" 2>/dev/null || true)"
+              echo "POST / response:"
+              echo "$RESP" | sed -E 's/"token"\s*:\s*"[^"]{0,12}[^"]*"/"token":"[REDACTED]"/'
+            fi
+            if [ -z "$RESP" ]; then
+              echo "FATAL: never got a usable response from the socket." >&2
+              exit 1
+            fi
+
+            TOKEN="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" <<< "$RESP")"
+            RUNNER_HOST="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('runner_host',''))" <<< "$RESP")"
+            if [ -z "$TOKEN" ] || [ -z "$RUNNER_HOST" ]; then
+              echo "FATAL: parsed empty token or runner_host out of: $RESP" >&2
+              exit 1
+            fi
+            echo "runner_host=$RUNNER_HOST"
+            echo "token length=${#TOKEN}"
+
+            echo "=== cache-save: empty body (known: expect 400) ==="
+            curl -s -o /tmp/save1.$$ -w 'HTTP %{http_code}\n' -X POST \
+              -H "Authorization: Bearer $TOKEN" \
+              "$RUNNER_HOST/api/v2/output/cache-save"
+            cat /tmp/save1.$$; echo
+
+            for BODY in \
+              '{"key":"probe-key-1","version":"v1"}' \
+              '{"key":"probe-key-1","version":"v1","size":10}' \
+              '{"cache_key":"probe-key-1","version":"v1"}' \
+              '{"key":"probe-key-1"}' \
+              ; do
+              echo "=== cache-save body: $BODY ==="
+              curl -s -o /tmp/save2.$$ -w 'HTTP %{http_code}\n' -X POST \
+                -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                -d "$BODY" \
+                "$RUNNER_HOST/api/v2/output/cache-save"
+              cat /tmp/save2.$$; echo
+            done
+
+            echo "=== cache-restore: candidate paths/bodies ==="
+            for BODY in \
+              '{"key":"probe-key-1","version":"v1"}' \
+              '{"keys":["probe-key-1"],"version":"v1"}' \
+              ; do
+              echo "--- POST /api/v2/output/cache-restore body: $BODY ---"
+              curl -s -o /tmp/restore1.$$ -w 'HTTP %{http_code}\n' -X POST \
+                -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                -d "$BODY" \
+                "$RUNNER_HOST/api/v2/output/cache-restore"
+              cat /tmp/restore1.$$; echo
+            done
+            echo "--- GET /api/v2/output/cache-restore?key=probe-key-1&version=v1 ---"
+            curl -s -o /tmp/restore2.$$ -w 'HTTP %{http_code}\n' \
+              -H "Authorization: Bearer $TOKEN" \
+              "$RUNNER_HOST/api/v2/output/cache-restore?key=probe-key-1&version=v1"
+            cat /tmp/restore2.$$; echo
+
 workflows:
   test-deploy:
     jobs:
+      - probe_cache_shim_protocol:
+          name: TEMP Probe Cache Shim Protocol
+          filters: *filters
       # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
       # Test your orb's commands in a custom job and test your orb's jobs directly as a part of this workflow.
       - run_on_remote_docker:
