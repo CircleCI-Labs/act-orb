@@ -409,10 +409,15 @@ jobs:
             set -euo pipefail
             fakebin="$(mktemp -d)"
             call_log="$(mktemp)"
-            cat > "${fakebin}/act" << 'FAKEACT'
-            #!/bin/bash
-            echo "$@" >> "${ACT_CALL_LOG}"
-            FAKEACT
+            # A bash heredoc is deliberately avoided here. CircleCI's own pipeline/parameter
+            # substitution scans each YAML string value for its two-character open marker
+            # followed, anywhere later in that same value, by its two-character close marker
+            # -- a heredoc's open marker plus an unrelated append-redirect later in its own
+            # body forms exactly that shape and gets misread as a malformed substitution,
+            # erroring at config-compile time with "Expected valid identifier." (reproduced
+            # live on a real pipeline). printf avoids the problem entirely -- same style as
+            # harness-orb's own test_run_plugin_booleans, which this test otherwise mirrors.
+            printf '#!/bin/bash\necho "$@" >> "${ACT_CALL_LOG}"\n' > "${fakebin}/act"
             chmod +x "${fakebin}/act"
 
             # run-act.sh requires the workflow file to actually exist (a real,
@@ -669,11 +674,15 @@ jobs:
             set -euo pipefail
             dir="$(mktemp -d)"
             handoff="${dir}/.act-orb-outputs.env"
+            # LT+LT (not a literal doubled less-than in this file's own source) builds the
+            # actions/core-style key-plus-delimiter marker at runtime -- see the boolean-test
+            # job above for why a literal doubled marker character is avoided in config source.
+            LT='<'
             {
-              printf "%s<<%s\n" "my-output" "DELIM1"
+              printf '%s%s%s%s\n' "my-output" "${LT}" "${LT}" "DELIM1"
               printf "%s\n" "safe-value"
               printf "%s\n" "DELIM1"
-              printf "%s<<%s\n" "evil" "DELIM2"
+              printf '%s%s%s%s\n' "evil" "${LT}" "${LT}" "DELIM2"
               printf '%s\n' '$(touch /tmp/pwned-subshell) `touch /tmp/pwned-backtick` "quoted"'
               printf "%s\n" "DELIM2"
             } > "${handoff}"
