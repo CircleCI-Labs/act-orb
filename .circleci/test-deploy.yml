@@ -275,87 +275,19 @@ jobs:
     steps:
       - run:
           name: Probe /tmp/circleci-ts.sock and the runner cache endpoints
+          # The probe is a self-contained Python 3 stdlib script (uses
+          # http.client over an AF_UNIX socket plus urllib for the runner_host
+          # calls), shipped here as base64 rather than a heredoc: CircleCI's
+          # own config v2.1 parser treats a literal '<<' as the start of its
+          # own '<< ... >>' template syntax and errors the whole pipeline if
+          # it doesn't find a matching '>>' nearby (hit this for real on the
+          # first version of this probe, which used bash's '<<<' herestring
+          # operator) -- base64 has no '<' character at all, sidestepping the
+          # question entirely rather than trying to escape around it.
           command: |
             set -uo pipefail
-            if [ ! -S /tmp/circleci-ts.sock ]; then
-              echo "No /tmp/circleci-ts.sock present on this job -- cannot probe." >&2
-              exit 1
-            fi
-            echo "=== Candidate paths against the unix socket ==="
-            for p in / /token /api/v1/token /task-token /v1/token /internal/token; do
-              echo "--- GET $p ---"
-              curl -s -o /tmp/resp.$$ -w 'HTTP %{http_code}\n' --unix-socket /tmp/circleci-ts.sock "http://localhost$p" || echo "(curl error $?)"
-              sed -E 's/"token"\s*:\s*"[^"]{0,12}[^"]*"/"token":"[REDACTED]"/' /tmp/resp.$$ 2>/dev/null
-              echo
-            done
-
-            echo "=== Locating the real token/runner_host response ==="
-            RESP=""
-            for p in / /token /api/v1/token /task-token /v1/token /internal/token; do
-              CAND="$(curl -s --unix-socket /tmp/circleci-ts.sock "http://localhost$p" 2>/dev/null || true)"
-              if echo "$CAND" | grep -q '"token"' && echo "$CAND" | grep -q 'runner_host'; then
-                RESP="$CAND"
-                echo "Found working path: $p"
-                break
-              fi
-            done
-            if [ -z "$RESP" ]; then
-              echo "Could not find a socket path returning {token, runner_host}. Trying POST on /." >&2
-              RESP="$(curl -s -X POST --unix-socket /tmp/circleci-ts.sock "http://localhost/" 2>/dev/null || true)"
-              echo "POST / response:"
-              echo "$RESP" | sed -E 's/"token"\s*:\s*"[^"]{0,12}[^"]*"/"token":"[REDACTED]"/'
-            fi
-            if [ -z "$RESP" ]; then
-              echo "FATAL: never got a usable response from the socket." >&2
-              exit 1
-            fi
-
-            TOKEN="$(printf '%s' "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))")"
-            RUNNER_HOST="$(printf '%s' "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('runner_host',''))")"
-            if [ -z "$TOKEN" ] || [ -z "$RUNNER_HOST" ]; then
-              echo "FATAL: parsed empty token or runner_host out of: $RESP" >&2
-              exit 1
-            fi
-            echo "runner_host=$RUNNER_HOST"
-            echo "token length=${#TOKEN}"
-
-            echo "=== cache-save: empty body (known: expect 400) ==="
-            curl -s -o /tmp/save1.$$ -w 'HTTP %{http_code}\n' -X POST \
-              -H "Authorization: Bearer $TOKEN" \
-              "$RUNNER_HOST/api/v2/output/cache-save"
-            cat /tmp/save1.$$; echo
-
-            for BODY in \
-              '{"key":"probe-key-1","version":"v1"}' \
-              '{"key":"probe-key-1","version":"v1","size":10}' \
-              '{"cache_key":"probe-key-1","version":"v1"}' \
-              '{"key":"probe-key-1"}' \
-              ; do
-              echo "=== cache-save body: $BODY ==="
-              curl -s -o /tmp/save2.$$ -w 'HTTP %{http_code}\n' -X POST \
-                -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-                -d "$BODY" \
-                "$RUNNER_HOST/api/v2/output/cache-save"
-              cat /tmp/save2.$$; echo
-            done
-
-            echo "=== cache-restore: candidate paths/bodies ==="
-            for BODY in \
-              '{"key":"probe-key-1","version":"v1"}' \
-              '{"keys":["probe-key-1"],"version":"v1"}' \
-              ; do
-              echo "--- POST /api/v2/output/cache-restore body: $BODY ---"
-              curl -s -o /tmp/restore1.$$ -w 'HTTP %{http_code}\n' -X POST \
-                -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-                -d "$BODY" \
-                "$RUNNER_HOST/api/v2/output/cache-restore"
-              cat /tmp/restore1.$$; echo
-            done
-            echo "--- GET /api/v2/output/cache-restore?key=probe-key-1&version=v1 ---"
-            curl -s -o /tmp/restore2.$$ -w 'HTTP %{http_code}\n' \
-              -H "Authorization: Bearer $TOKEN" \
-              "$RUNNER_HOST/api/v2/output/cache-restore?key=probe-key-1&version=v1"
-            cat /tmp/restore2.$$; echo
+            echo "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiIKVEVNUE9SQVJZIGRpc2NvdmVyeSBwcm9iZSAtLSBub3QgcGFydCBvZiB0aGUgc2hpcHBlZCBzaGltLiBMZWFybnMsIGZyb20gYQpyZWFsIGpvYiwgdGhlIGV4YWN0IHJlcXVlc3QgY29udHJhY3Qgb2YgL3RtcC9jaXJjbGVjaS10cy5zb2NrIGFuZAokcnVubmVyX2hvc3QncyAvYXBpL3YyL291dHB1dC9jYWNoZS1zYXZlICsgY2FjaGUtcmVzdG9yZSBlbmRwb2ludHMuIEV2ZXJ5CnJlc3BvbnNlIGlzIGR1bXBlZCBpbiBmdWxsOyB0aGUgdGFzayB0b2tlbiBpdHNlbGYgaXMgcmVkYWN0ZWQgc2luY2UgaXQgaXMgYQpsaXZlIGNyZWRlbnRpYWwgZm9yIHRoZSByZW1haW5kZXIgb2YgdGhpcyBvdXRwdXQsIGV2ZXJ5dGhpbmcgZWxzZSBpcwppbnRlbnRpb25hbGx5IHZlcmJvc2UuCiIiIgppbXBvcnQgaHR0cC5jbGllbnQKaW1wb3J0IGpzb24KaW1wb3J0IHJlCmltcG9ydCBzb2NrZXQKaW1wb3J0IHN5cwppbXBvcnQgdXJsbGliLmVycm9yCmltcG9ydCB1cmxsaWIucmVxdWVzdAoKU09DS19QQVRIID0gIi90bXAvY2lyY2xlY2ktdHMuc29jayIKCgpjbGFzcyBVbml4SFRUUENvbm5lY3Rpb24oaHR0cC5jbGllbnQuSFRUUENvbm5lY3Rpb24pOgogICAgZGVmIF9faW5pdF9fKHNlbGYsIHBhdGgpOgogICAgICAgIHN1cGVyKCkuX19pbml0X18oImxvY2FsaG9zdCIpCiAgICAgICAgc2VsZi5fdW5peF9wYXRoID0gcGF0aAoKICAgIGRlZiBjb25uZWN0KHNlbGYpOgogICAgICAgIHNlbGYuc29jayA9IHNvY2tldC5zb2NrZXQoc29ja2V0LkFGX1VOSVgsIHNvY2tldC5TT0NLX1NUUkVBTSkKICAgICAgICBzZWxmLnNvY2suc2V0dGltZW91dCg1KQogICAgICAgIHNlbGYuc29jay5jb25uZWN0KHNlbGYuX3VuaXhfcGF0aCkKCgpkZWYgcmVkYWN0KHMpOgogICAgcmV0dXJuIHJlLnN1YihyJyJ0b2tlbiJccyo6XHMqIlteIl0qIicsICcidG9rZW4iOiJbUkVEQUNURURdIicsIHMpCgoKZGVmIHNvY2tfcmVxdWVzdChtZXRob2QsIHBhdGgpOgogICAgY29ubiA9IFVuaXhIVFRQQ29ubmVjdGlvbihTT0NLX1BBVEgpCiAgICB0cnk6CiAgICAgICAgY29ubi5yZXF1ZXN0KG1ldGhvZCwgcGF0aCkKICAgICAgICByZXNwID0gY29ubi5nZXRyZXNwb25zZSgpCiAgICAgICAgYm9keSA9IHJlc3AucmVhZCgpLmRlY29kZSgidXRmLTgiLCAicmVwbGFjZSIpCiAgICAgICAgcmV0dXJuIHJlc3Auc3RhdHVzLCBib2R5CiAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGV4YzogICMgbm9xYTogQkxFMDAxCiAgICAgICAgcmV0dXJuIE5vbmUsIGYiKGV4Y2VwdGlvbjoge2V4YyFyfSkiCiAgICBmaW5hbGx5OgogICAgICAgIGNvbm4uY2xvc2UoKQoKCmRlZiBodHRwX3JlcXVlc3QobWV0aG9kLCB1cmwsIHRva2VuPU5vbmUsIGJvZHk9Tm9uZSk6CiAgICBkYXRhID0gTm9uZQogICAgaGVhZGVycyA9IHt9CiAgICBpZiBib2R5IGlzIG5vdCBOb25lOgogICAgICAgIGRhdGEgPSBib2R5LmVuY29kZSgidXRmLTgiKQogICAgICAgIGhlYWRlcnNbIkNvbnRlbnQtVHlwZSJdID0gImFwcGxpY2F0aW9uL2pzb24iCiAgICBpZiB0b2tlbjoKICAgICAgICBoZWFkZXJzWyJBdXRob3JpemF0aW9uIl0gPSBmIkJlYXJlciB7dG9rZW59IgogICAgcmVxID0gdXJsbGliLnJlcXVlc3QuUmVxdWVzdCh1cmwsIGRhdGE9ZGF0YSwgbWV0aG9kPW1ldGhvZCwgaGVhZGVycz1oZWFkZXJzKQogICAgdHJ5OgogICAgICAgIHdpdGggdXJsbGliLnJlcXVlc3QudXJsb3BlbihyZXEsIHRpbWVvdXQ9MTUpIGFzIHJlc3A6CiAgICAgICAgICAgIHJldHVybiByZXNwLnN0YXR1cywgcmVzcC5yZWFkKCkuZGVjb2RlKCJ1dGYtOCIsICJyZXBsYWNlIiksIGRpY3QocmVzcC5oZWFkZXJzKQogICAgZXhjZXB0IHVybGxpYi5lcnJvci5IVFRQRXJyb3IgYXMgZXhjOgogICAgICAgIHJldHVybiBleGMuY29kZSwgZXhjLnJlYWQoKS5kZWNvZGUoInV0Zi04IiwgInJlcGxhY2UiKSwgZGljdChleGMuaGVhZGVycyBvciB7fSkKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZXhjOiAgIyBub3FhOiBCTEUwMDEKICAgICAgICByZXR1cm4gTm9uZSwgZiIoZXhjZXB0aW9uOiB7ZXhjIXJ9KSIsIHt9CgoKZGVmIG1haW4oKToKICAgIGltcG9ydCBvcwoKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhTT0NLX1BBVEgpOgogICAgICAgIHByaW50KGYiTm8ge1NPQ0tfUEFUSH0gcHJlc2VudCBvbiB0aGlzIGpvYiAtLSBjYW5ub3QgcHJvYmUuIiwgZmlsZT1zeXMuc3RkZXJyKQogICAgICAgIHJldHVybiAxCgogICAgcHJpbnQoIj09PSBDYW5kaWRhdGUgR0VUIHBhdGhzIGFnYWluc3QgdGhlIHVuaXggc29ja2V0ID09PSIpCiAgICBjYW5kaWRhdGVzID0gWyIvIiwgIi90b2tlbiIsICIvYXBpL3YxL3Rva2VuIiwgIi90YXNrLXRva2VuIiwgIi92MS90b2tlbiIsICIvaW50ZXJuYWwvdG9rZW4iXQogICAgZm91bmRfYm9keSA9IE5vbmUKICAgIGZvdW5kX3BhdGggPSBOb25lCiAgICBmb3IgcCBpbiBjYW5kaWRhdGVzOgogICAgICAgIHN0YXR1cywgYm9keSA9IHNvY2tfcmVxdWVzdCgiR0VUIiwgcCkKICAgICAgICBwcmludChmIi0tLSBHRVQge3B9IC0+IHtzdGF0dXN9IC0tLSIpCiAgICAgICAgcHJpbnQocmVkYWN0KGJvZHkpWzoyMDAwXSkKICAgICAgICBpZiBzdGF0dXMgPT0gMjAwIGFuZCAnInRva2VuIicgaW4gYm9keSBhbmQgInJ1bm5lcl9ob3N0IiBpbiBib2R5OgogICAgICAgICAgICBmb3VuZF9ib2R5ID0gYm9keQogICAgICAgICAgICBmb3VuZF9wYXRoID0gcAoKICAgIGlmIGZvdW5kX2JvZHkgaXMgTm9uZToKICAgICAgICBwcmludCgiPT09IE5vIEdFVCBjYW5kaWRhdGUgd29ya2VkOyB0cnlpbmcgUE9TVCAvID09PSIpCiAgICAgICAgc3RhdHVzLCBib2R5ID0gc29ja19yZXF1ZXN0KCJQT1NUIiwgIi8iKQogICAgICAgIHByaW50KGYiLS0tIFBPU1QgLyAtPiB7c3RhdHVzfSAtLS0iKQogICAgICAgIHByaW50KHJlZGFjdChib2R5KVs6MjAwMF0pCiAgICAgICAgaWYgc3RhdHVzID09IDIwMCBhbmQgJyJ0b2tlbiInIGluIGJvZHkgYW5kICJydW5uZXJfaG9zdCIgaW4gYm9keToKICAgICAgICAgICAgZm91bmRfYm9keSA9IGJvZHkKICAgICAgICAgICAgZm91bmRfcGF0aCA9ICIvIChQT1NUKSIKCiAgICBpZiBmb3VuZF9ib2R5IGlzIE5vbmU6CiAgICAgICAgcHJpbnQoIkZBVEFMOiBuZXZlciBnb3QgYSB1c2FibGUge3Rva2VuLCBydW5uZXJfaG9zdH0gcmVzcG9uc2UgZnJvbSB0aGUgc29ja2V0LiIsIGZpbGU9c3lzLnN0ZGVycikKICAgICAgICByZXR1cm4gMQoKICAgIHByaW50KGYiXG5Gb3VuZCB3b3JraW5nIHBhdGg6IHtmb3VuZF9wYXRofSIpCiAgICBwYXJzZWQgPSBqc29uLmxvYWRzKGZvdW5kX2JvZHkpCiAgICB0b2tlbiA9IHBhcnNlZC5nZXQoInRva2VuIiwgIiIpCiAgICBydW5uZXJfaG9zdCA9IHBhcnNlZC5nZXQoInJ1bm5lcl9ob3N0IiwgIiIpCiAgICBpZiBub3QgdG9rZW4gb3Igbm90IHJ1bm5lcl9ob3N0OgogICAgICAgIHByaW50KGYiRkFUQUw6IHBhcnNlZCBlbXB0eSB0b2tlbiBvciBydW5uZXJfaG9zdCBvdXQgb2Y6IHtyZWRhY3QoZm91bmRfYm9keSl9IiwgZmlsZT1zeXMuc3RkZXJyKQogICAgICAgIHJldHVybiAxCiAgICBwcmludChmInJ1bm5lcl9ob3N0PXtydW5uZXJfaG9zdH0iKQogICAgcHJpbnQoZiJ0b2tlbiBsZW5ndGg9e2xlbih0b2tlbil9IikKCiAgICBwcmludCgiXG49PT0gY2FjaGUtc2F2ZTogZW1wdHkgYm9keSAoa25vd24gYmFzZWxpbmU6IGV4cGVjdCA0MDApID09PSIpCiAgICBzdGF0dXMsIGJvZHksIGhkcnMgPSBodHRwX3JlcXVlc3QoIlBPU1QiLCBmIntydW5uZXJfaG9zdH0vYXBpL3YyL291dHB1dC9jYWNoZS1zYXZlIiwgdG9rZW49dG9rZW4pCiAgICBwcmludChmIkhUVFAge3N0YXR1c30iKQogICAgcHJpbnQoYm9keVs6MjAwMF0pCgogICAgYm9kaWVzID0gWwogICAgICAgICd7ImtleSI6InByb2JlLWtleS0xIiwidmVyc2lvbiI6InYxIn0nLAogICAgICAgICd7ImtleSI6InByb2JlLWtleS0xIiwidmVyc2lvbiI6InYxIiwic2l6ZSI6MTB9JywKICAgICAgICAneyJjYWNoZV9rZXkiOiJwcm9iZS1rZXktMSIsInZlcnNpb24iOiJ2MSJ9JywKICAgICAgICAneyJrZXkiOiJwcm9iZS1rZXktMSJ9JywKICAgIF0KICAgIGZvciBiIGluIGJvZGllczoKICAgICAgICBwcmludChmIlxuPT09IGNhY2hlLXNhdmUgYm9keToge2J9ID09PSIpCiAgICAgICAgc3RhdHVzLCBib2R5LCBoZHJzID0gaHR0cF9yZXF1ZXN0KAogICAgICAgICAgICAiUE9TVCIsIGYie3J1bm5lcl9ob3N0fS9hcGkvdjIvb3V0cHV0L2NhY2hlLXNhdmUiLCB0b2tlbj10b2tlbiwgYm9keT1iCiAgICAgICAgKQogICAgICAgIHByaW50KGYiSFRUUCB7c3RhdHVzfSIpCiAgICAgICAgcHJpbnQoYm9keVs6MzAwMF0pCgogICAgcHJpbnQoIlxuPT09IGNhY2hlLXJlc3RvcmU6IGNhbmRpZGF0ZSBib2RpZXMgPT09IikKICAgIGZvciBiIGluIFsKICAgICAgICAneyJrZXkiOiJwcm9iZS1rZXktMSIsInZlcnNpb24iOiJ2MSJ9JywKICAgICAgICAneyJrZXlzIjpbInByb2JlLWtleS0xIl0sInZlcnNpb24iOiJ2MSJ9JywKICAgIF06CiAgICAgICAgcHJpbnQoZiItLS0gUE9TVCAvYXBpL3YyL291dHB1dC9jYWNoZS1yZXN0b3JlIGJvZHk6IHtifSAtLS0iKQogICAgICAgIHN0YXR1cywgYm9keSwgaGRycyA9IGh0dHBfcmVxdWVzdCgKICAgICAgICAgICAgIlBPU1QiLCBmIntydW5uZXJfaG9zdH0vYXBpL3YyL291dHB1dC9jYWNoZS1yZXN0b3JlIiwgdG9rZW49dG9rZW4sIGJvZHk9YgogICAgICAgICkKICAgICAgICBwcmludChmIkhUVFAge3N0YXR1c30iKQogICAgICAgIHByaW50KGJvZHlbOjMwMDBdKQoKICAgIHByaW50KCItLS0gR0VUIC9hcGkvdjIvb3V0cHV0L2NhY2hlLXJlc3RvcmU/a2V5PXByb2JlLWtleS0xJnZlcnNpb249djEgLS0tIikKICAgIHN0YXR1cywgYm9keSwgaGRycyA9IGh0dHBfcmVxdWVzdCgKICAgICAgICAiR0VUIiwgZiJ7cnVubmVyX2hvc3R9L2FwaS92Mi9vdXRwdXQvY2FjaGUtcmVzdG9yZT9rZXk9cHJvYmUta2V5LTEmdmVyc2lvbj12MSIsIHRva2VuPXRva2VuCiAgICApCiAgICBwcmludChmIkhUVFAge3N0YXR1c30iKQogICAgcHJpbnQoYm9keVs6MzAwMF0pCgogICAgcHJpbnQoIlxuPT09IGRvbmUgPT09IikKICAgIHJldHVybiAwCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIHN5cy5leGl0KG1haW4oKSkK" | base64 -d > /tmp/probe.py
+            python3 /tmp/probe.py
 
 workflows:
   test-deploy:
