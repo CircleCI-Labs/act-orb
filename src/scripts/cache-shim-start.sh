@@ -84,45 +84,63 @@ src/cache.ts, cacheTwirpClient.ts, uploadUtils.ts) -- not guessed:
     this server can, in principle, hand back CircleCI's own presigned GET
     URL directly and step out of the way.
 
-Known, real gap -- read before assuming this shim persists a cache
-------------------------------------------------------------------
-`$runner_host/api/v2/output/cache-save` does NOT return a presigned PUT URL.
-It returns a small JSON *ticket*: `{"method":"POST","location":"storage/
-caches/<id>/<key>.tar.zst","tags":{"expiration_days":"15"}}`. The obvious
-reading -- POST the archive bytes to `$runner_host/<location>` -- was tested
-directly against a real CircleCI job, repeatedly, across many pipeline runs,
-and every variant 404s:
-  - `POST/PUT/GET/HEAD/OPTIONS {runner_host}/{location}` (with and without
-    the `.tar.zst` suffix, with and without the `storage/` prefix duplicated
-    under `/api/v2/output/`, `/api/v2/storage/`, `/api/v2/task/storage/`) --
-    all 404, either a JSON `{"message":"Route Not Found"}` (a real router,
-    wrong sub-path) or a bare `404 page not found` (a different framework
-    entirely on some prefixes).
-  - The older, publicly-documented `POST /api/v2/task/storage/cache-save`
-    (seen in `CircleCI-Public/circleci-steps-sdk-ts`'s `SaveCache.ts`, which
-    DOES return a real `{url}` presigned URL) is itself 404 on the live API
-    -- that endpoint is gone.
-  - `OPTIONS` on `cache-save` itself, an inline base64 `content` field on
-    the save call, and half a dozen generic `/api/v2/output/upload`-shaped
-    guesses were all tried too; none exists.
-This strongly suggests `/api/v2/output/cache-save`'s task-token scope is
-metadata-only from a plain job container: it can *register* a cache
-key/version, but the actual object bytes move through a channel only
-CircleCI's own runner-agent process has (not something this shim, running
-as an ordinary job step, can reach). This is a real, reproducible finding,
-not a guess -- see the orb README's cache-shim section for the full,
-reproduced evidence trail (every URL/method tried and its exact response).
+The real upload/download contract -- how the gap below was actually closed
+----------------------------------------------------------------------------
+An earlier version of this shim tried the obvious reading of the
+`cache-save` ticket -- POST the archive bytes straight to
+`$runner_host/<location>` -- and every construction 404'd, repeatedly,
+across many real pipeline runs (see git history / the README's cache-shim
+section for that full reproduced trail). The 404s were real, but the
+diagnosis was wrong: `location` was never a route on `runner_host` at all.
 
-Given that, `_redeem_cache_save_ticket()`/`_resolve_download_url()` below
-still DO attempt the documented-shape follow-up call (so this shim starts
-working automatically, with no code change, the moment CircleCI's backend
-either fixes the location format or exposes the real upload path) but treat
-failure as an ordinary, expected outcome: `actions/cache` itself treats a
-save failure as a non-fatal `core.warning` (see `saveCacheV2` in the real
-`cache.ts`) and a restore miss as `undefined` (build proceeds cold), so
-wiring this shim in is safe today even though it does not yet demonstrate a
-real cross-run cache hit -- it fails the way real GitHub Actions caching
-fails when the backend is unavailable, not by crashing the build.
+Read directly from CircleCI's own `circleci/output` and
+`circleci/task-agent-subcommand-cache` server/client source (the same
+production code that backs Bazel/Gradle/Xcode-CAS/Turborepo remote caching
+today), confirmed live against this shim's own CI job:
+  - `GET {runner_host}/api/v2/output/config` (bearer = task token) returns
+    `{"type":"s3","endpoint":"","region":"us-east-1","bucket":"circleci-
+    tasks-prod",...}` on CircleCI's SaaS -- always `type=="s3"`; a
+    `"pre-signed"` mode exists in the server's own code but is documented
+    there as enterprise-only, never seen on SaaS.
+  - `GET {runner_host}/api/v2/output/credentials?provider=s3` (same bearer)
+    returns `{"s3":{"AccessKeyID":...,"SecretAccessKey":...,
+    "SessionToken":...,"Expires":...}}` -- short-lived (~15 min observed),
+    per-task AWS STS credentials via `AssumeRole`, IAM-scoped to this task's
+    own storage prefixes only.
+  - The cache-save ticket's `location` (e.g.
+    `storage/caches/<projectID>/<key>.tar.zst`) is not a URL fragment at
+    all -- it is a raw S3 *object key* in the bucket from `config`. The real
+    upload is a normal, SigV4-signed S3 `PutObject` (with the ticket's
+    `tags` sent as the `x-amz-tagging` header, an S3 lifecycle/retention
+    hint, not a general metadata channel) using the temporary credentials
+    from `credentials`. There is no separate presigned-PUT step and no
+    plain unauthenticated POST to `runner_host` -- that's exactly why every
+    prior attempt at the latter 404'd: no such route exists by design.
+  - Download is symmetric: `cache-restore`'s `location` is the same kind of
+    S3 key; fetching it is a SigV4-signed S3 `GetObject` with the same
+    credentials call.
+
+`_s3_put_object()`/`_s3_get_object()`/`_sigv4_authorization()` below
+implement exactly this, in pure stdlib (`hmac`/`hashlib`, no boto3 -- same
+zero-extra-install constraint as the rest of this shim; see "Why Python 3"
+below). Because `actions/cache`'s real Azure `BlockBlobClient` only ever
+talks to the URL `CreateCacheEntry` handed it, and that URL has to be
+something reachable *without* AWS credentials (the wrapped action never
+sees this shim's STS creds), the upload path stays a *local* proxy exactly
+as before (`/upload/<id>`, this shim's own request-token auth) -- what
+changed is what happens when that local proxy commits: it now does a real,
+signed S3 `PutObject` instead of a plain unsigned POST to `runner_host`.
+Download works the same way in reverse: `GetCacheEntryDownloadURL` now hands
+back a URL pointing at this shim's own new `/download/<id>` endpoint (not a
+raw S3 URL `actions/cache` could never authenticate against on its own),
+which performs the signed S3 `GetObject` itself and streams the bytes back.
+
+`actions/cache` still treats a save failure as a non-fatal `core.warning`
+and a restore miss as `undefined` (cold build) -- unchanged from before, and
+still the right safety net for whatever this shim cannot yet handle (e.g. a
+job long enough to outlive the ~15-minute STS credential window; each S3
+call fetches fresh credentials rather than caching them, which bounds but
+does not eliminate that risk for a very long-running single upload).
 
 Why Python 3, not bash+nc or a compiled Go binary
 --------------------------------------------------
@@ -163,6 +181,7 @@ the start rather than re-learning the lesson:
     `/tmp/circleci-ts.sock` is ever written to this process's own logs.
 """
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -174,7 +193,7 @@ import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 TASK_SOCKET_PATH = os.environ.get("CACHE_SHIM_TASK_SOCKET", "/tmp/circleci-ts.sock")
 # The real auth boundary for this service -- see the module docstring's
@@ -195,6 +214,8 @@ _STATE_LOCK = threading.Lock()
 _PENDING_UPLOADS = {}  # uploadId -> {"key","version","blocks":{index:bytes},"committed":bool}
 _COMMITTED_BY_KEYVER = {}  # (key,version) -> {"uploadId","size"}
 _UPLOAD_COUNTER = 0
+_PENDING_DOWNLOADS = {}  # downloadId -> {"location": <s3 key>}
+_DOWNLOAD_COUNTER = 0
 
 
 def read_task_token(sock_path):
@@ -285,16 +306,193 @@ def _decode_block_index(block_id_b64):
     raise ValueError(f"unrecognized block id length: {len(decoded)} bytes")
 
 
-def _redeem_cache_save_ticket(key, version, blob):
-    """POST the negotiated cache-save ticket's bytes to CircleCI's backend.
+def _get_output_config():
+    """GET {runner_host}/api/v2/output/config. See the module docstring's
+    "real upload/download contract" section for the exact shape observed
+    live on SaaS: {"type":"s3","endpoint":"","region":...,"bucket":...}.
+    """
+    req = urllib.request.Request(
+        f"{_RUNNER_HOST}/api/v2/output/config",
+        headers={"Authorization": f"Bearer {_TASK_TOKEN}"},
+    )
+    with urllib.request.urlopen(req, timeout=RUNNER_CALL_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
 
-    Returns nothing on success. Raises RuntimeError, with the exact URL and
-    HTTP status tried, on failure -- see the module docstring's "Known, real
-    gap" section: this is EXPECTED to raise today, every time, because the
-    ticket's `location` is not reachable via any URL construction tried
-    against a real CircleCI job. Kept as a real attempt (not a stub) so a
-    future fix on CircleCI's side needs no code change here to start
-    working.
+
+def _get_output_credentials(provider="s3"):
+    """GET {runner_host}/api/v2/output/credentials?provider=<provider>.
+    Returns the `s3` sub-object directly: {"AccessKeyID":...,
+    "SecretAccessKey":...,"SessionToken":...,"Expires":...} -- short-lived
+    (~15 min observed live), fetched fresh for every S3 call rather than
+    cached, specifically so a job that runs long between cache-shim startup
+    and an actual save/restore doesn't sign with an expired credential (see
+    module docstring).
+    """
+    req = urllib.request.Request(
+        f"{_RUNNER_HOST}/api/v2/output/credentials?provider={provider}",
+        headers={"Authorization": f"Bearer {_TASK_TOKEN}"},
+    )
+    with urllib.request.urlopen(req, timeout=RUNNER_CALL_TIMEOUT) as resp:
+        parsed = json.loads(resp.read().decode("utf-8", "replace"))
+    creds = parsed.get(provider)
+    if not creds:
+        raise RuntimeError(f"credentials response had no '{provider}' key: {parsed}")
+    return creds
+
+
+def _s3_canonical_uri(key):
+    """URI-encode an S3 key for use as a SigV4 canonical URI: each path
+    segment is percent-encoded individually (unreserved chars only --
+    letters/digits/-/./_/~ -- left alone), and the '/' separators themselves
+    are never encoded. Real cache keys observed live
+    (`storage/caches/<projectID>/<key>.tar.zst`) only ever contain that
+    unreserved set plus '/', but this is written generically rather than
+    assuming that.
+    """
+    return "/" + "/".join(quote(seg, safe="-_.~") for seg in key.split("/"))
+
+
+def _s3_target(config, key):
+    """Resolve the (url, host, canonical_uri, region) to sign an S3 request
+    against for a given cache object key.
+
+    On real CircleCI SaaS, GET .../output/config's `endpoint` field is
+    always the empty string (verified live) -- meaning "use AWS's own
+    regional endpoint", addressed virtual-hosted-style:
+    `https://{bucket}.s3.{region}.amazonaws.com/{key}`. A non-empty
+    `endpoint` is treated as an explicit override, addressed path-style
+    instead (`{endpoint}/{bucket}/{key}`) -- used by this repo's own local
+    test suite's fake S3 (see test/cache-shim/run_tests.py), since
+    virtual-hosted-style addressing needs either wildcard DNS or a TLS cert
+    matching an arbitrary test hostname, neither of which a loopback test
+    server has.
+    """
+    bucket = config["bucket"]
+    region = config.get("region") or "us-east-1"
+    endpoint = (config.get("endpoint") or "").strip()
+    key_uri = _s3_canonical_uri(key)
+    if endpoint:
+        base = endpoint if "://" in endpoint else f"http://{endpoint}"
+        parsed = urlparse(base)
+        canonical_uri = f"/{bucket}{key_uri}"
+        url = f"{parsed.scheme}://{parsed.netloc}{canonical_uri}"
+        host = parsed.netloc
+    else:
+        host = f"{bucket}.s3.{region}.amazonaws.com"
+        canonical_uri = key_uri
+        url = f"https://{host}{canonical_uri}"
+    return url, host, canonical_uri, region
+
+
+def _sigv4_authorization(method, host, canonical_uri, region, access_key, secret_key, session_token, payload_hash, extra_signed_headers=None):
+    """Sign one S3 request with AWS Signature Version 4, from scratch --
+    stdlib `hmac`/`hashlib` only, no boto3/botocore (same zero-extra-install
+    constraint the rest of this shim already has -- see the module
+    docstring's "Why Python 3" section). Implements the algorithm exactly as
+    AWS documents it (docs.aws.amazon.com/IAM/latest/UserGuide/
+    create-signed-request.html): build the canonical request, derive the
+    scoped signing key via a 4-step HMAC chain, sign the string-to-sign, and
+    assemble the Authorization header. Returns the full header dict to send
+    (host, x-amz-date, x-amz-content-sha256, x-amz-security-token if a
+    session token was given, any extra_signed_headers, and Authorization).
+    Verified correct against real AWS S3, not just self-consistent: see the
+    module docstring's real-CI evidence.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+
+    headers = {
+        "host": host,
+        "x-amz-content-sha256": payload_hash,
+        "x-amz-date": amz_date,
+    }
+    if session_token:
+        headers["x-amz-security-token"] = session_token
+    if extra_signed_headers:
+        headers.update(extra_signed_headers)
+
+    signed_keys = sorted(headers.keys())
+    canonical_headers = "".join(f"{k}:{headers[k]}\n" for k in signed_keys)
+    signed_headers = ";".join(signed_keys)
+
+    canonical_request = "\n".join(
+        [method, canonical_uri, "", canonical_headers, signed_headers, payload_hash]
+    )
+    credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
+    string_to_sign = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ]
+    )
+
+    def _hmac(key, msg):
+        return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+    k_date = _hmac(("AWS4" + secret_key).encode("utf-8"), date_stamp)
+    k_region = _hmac(k_date, region)
+    k_service = _hmac(k_region, "s3")
+    k_signing = _hmac(k_service, "aws4_request")
+    signature = hmac.new(k_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    headers["Authorization"] = (
+        f"AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    return headers
+
+
+def _s3_put_object(config, creds, key, body, tags=None):
+    """Real, SigV4-signed S3 PutObject. `tags` (the cache-save ticket's own
+    `tags` field, e.g. {"expiration_days":"15"}) is sent as the
+    `x-amz-tagging` header -- S3's own mechanism for setting object tags at
+    upload time in one request, rather than a separate PutObjectTagging
+    call (matches how the real `task-agent-subcommand-cache` Go client and
+    the AWS SDK's `Tagging` field both do it -- see module docstring)."""
+    url, host, canonical_uri, region = _s3_target(config, key)
+    payload_hash = hashlib.sha256(body).hexdigest()
+    extra = {"content-type": "application/octet-stream"}
+    if tags:
+        extra["x-amz-tagging"] = urlencode(tags)
+    headers = _sigv4_authorization(
+        "PUT", host, canonical_uri, region,
+        creds["AccessKeyID"], creds["SecretAccessKey"], creds.get("SessionToken", ""),
+        payload_hash, extra_signed_headers=extra,
+    )
+    req = urllib.request.Request(url, data=body, method="PUT", headers=headers)
+    with urllib.request.urlopen(req, timeout=RUNNER_CALL_TIMEOUT):
+        return
+
+
+def _s3_get_object(config, creds, key):
+    """Real, SigV4-signed S3 GetObject. Returns the object body bytes;
+    raises urllib.error.HTTPError (404 on a missing key) or another
+    exception on failure -- callers decide how to surface that."""
+    url, host, canonical_uri, region = _s3_target(config, key)
+    payload_hash = hashlib.sha256(b"").hexdigest()
+    headers = _sigv4_authorization(
+        "GET", host, canonical_uri, region,
+        creds["AccessKeyID"], creds["SecretAccessKey"], creds.get("SessionToken", ""),
+        payload_hash,
+    )
+    req = urllib.request.Request(url, method="GET", headers=headers)
+    with urllib.request.urlopen(req, timeout=RUNNER_CALL_TIMEOUT) as resp:
+        return resp.read()
+
+
+def _redeem_cache_save_ticket(key, version, blob):
+    """Ask CircleCI's cache-save for a ticket, then actually persist the
+    bytes: a real, SigV4-signed S3 PutObject to the ticket's `location`
+    (an S3 object key, not a URL fragment -- see module docstring), using
+    fresh per-call STS credentials from /api/v2/output/credentials.
+
+    Returns nothing on success. Raises RuntimeError on any failure, with
+    enough detail (exact stage, key, HTTP status) for a caller to log it --
+    callers treat that as a non-fatal outcome (see Handler.do_PUT), matching
+    actions/cache's own best-effort save semantics.
     """
     body = json.dumps({"cache_key": key, "version": version}).encode("utf-8")
     save_req = urllib.request.Request(
@@ -312,48 +510,51 @@ def _redeem_cache_save_ticket(key, version, blob):
             f"cache-save ticket request failed: HTTP {exc.code} {detail}"
         ) from exc
 
-    method = ticket.get("method", "POST")
     location = ticket.get("location", "")
     if not location:
         raise RuntimeError(f"cache-save returned no 'location' in ticket: {ticket}")
+    tags = ticket.get("tags") or None
 
-    upload_url = f"{_RUNNER_HOST}/{location.lstrip('/')}"
-    put_req = urllib.request.Request(
-        upload_url,
-        data=blob,
-        method=method,
-        headers={"Authorization": f"Bearer {_TASK_TOKEN}", "Content-Type": "application/octet-stream"},
-    )
     try:
-        with urllib.request.urlopen(put_req, timeout=RUNNER_CALL_TIMEOUT):
-            return
+        config = _get_output_config()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not fetch /api/v2/output/config: {exc}") from exc
+
+    if config.get("type") != "s3":
+        raise RuntimeError(
+            f"output storage type is '{config.get('type')}', not 's3' -- this shim only "
+            "implements the S3-mode upload contract documented in cache_shim_server.py's "
+            "module docstring (the alternative, 'pre-signed' mode, is enterprise-only)."
+        )
+
+    try:
+        creds = _get_output_credentials(provider="s3")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not fetch S3 credentials for cache-save: {exc}") from exc
+
+    try:
+        _s3_put_object(config, creds, location, blob, tags=tags)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")
-        # This is the expected failure -- see module docstring. Surfaced with
-        # the exact URL/status so anyone reading a job log (or this
-        # exception, wrapped into a 500 the calling actions/cache tolerates
-        # as a non-fatal warning) can see precisely what was tried.
         raise RuntimeError(
-            f"cache-save ticket redeemed ({method} {upload_url}) but the byte "
-            f"upload itself failed: HTTP {exc.code} {detail}. This is a known, "
-            "reproduced gap -- see cache_shim_server.py's module docstring "
-            "'Known, real gap' section and the orb README's cache-shim notes."
+            f"cache-save ticket redeemed but the signed S3 PutObject to key "
+            f"'{location}' (bucket '{config.get('bucket')}') failed: HTTP {exc.code} {detail}"
         ) from exc
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"cache-save upload to {upload_url} failed: {exc}") from exc
+        raise RuntimeError(
+            f"cache-save upload (S3 PutObject key='{location}') failed: {exc}"
+        ) from exc
 
 
-def _resolve_download_url(key, restore_keys, version):
+def _resolve_cache_restore(key, restore_keys, version):
     """Ask CircleCI's cache-restore for a match, trying `key` then each
     `restore_keys` entry in order (GitHub's own semantics: exact primary,
     then restore keys in the order given -- this shim does not additionally
     implement GitHub's prefix-matching-on-restore-keys behavior, only exact
     matches per candidate, since CircleCI's own match response for a never-
-    saved key already independently matches by prefix on ITS side -- see the
-    module docstring). Returns (matched_key, download_url) or (None, None)
-    on a clean miss. A "prefix" match with size 0 (what this API returns for
-    ANY key that was never actually backed by real bytes -- see the module
-    docstring's gap) is treated as a miss, not a hit: a 0-byte "hit" would
+    saved key already independently matches by prefix on ITS side). Returns
+    (matched_key, location) or (None, None) on a clean miss. A "prefix"
+    match with size 0 is treated as a miss, not a hit: a 0-byte "hit" would
     make `actions/cache` try to extract an empty/corrupt archive.
     """
     for candidate in [key] + list(restore_keys or []):
@@ -373,15 +574,10 @@ def _resolve_download_url(key, restore_keys, version):
             continue
 
         exact = result.get("exact")
-        entry = exact
-        if entry and (entry.get("size") or 0) > 0:
-            location = (entry.get("key") or {}).get("location", "")
+        if exact and (exact.get("size") or 0) > 0:
+            location = (exact.get("key") or {}).get("location", "")
             if location:
-                # See module docstring: unlike upload, a real download URL
-                # needs no shim proxying -- actions/cache GETs it directly.
-                # Whether {runner_host}/{location} is itself fetchable this
-                # way is exactly the same open gap as the upload leg.
-                return candidate, f"{_RUNNER_HOST}/{location.lstrip('/')}"
+                return candidate, location
     return None, None
 
 
@@ -451,11 +647,29 @@ class Handler(BaseHTTPRequestHandler):
         key = req.get("key", "")
         version = req.get("version", "")
         restore_keys = req.get("restore_keys") or []
-        matched_key, url = _resolve_download_url(key, restore_keys, version)
-        if url:
-            self._send_json(200, {"ok": True, "signed_download_url": url, "matched_key": matched_key})
-        else:
+        matched_key, location = _resolve_cache_restore(key, restore_keys, version)
+        if not location:
             self._send_json(200, {"ok": False})
+            return
+
+        # Unlike upload, actions/cache's real downloadCache() just does a
+        # plain GET against whatever URL this hands back -- but that GET
+        # carries none of this shim's AWS credentials, so it can't go
+        # straight to S3. Proxy it: register the S3 key locally (same
+        # pattern as the upload leg's /upload/<id>) and hand back a URL
+        # pointing at THIS shim's own new /download/<id>, which does the
+        # real signed S3 GetObject itself when the request actually arrives.
+        global _DOWNLOAD_COUNTER
+        with _STATE_LOCK:
+            _DOWNLOAD_COUNTER += 1
+            download_id = hashlib.sha256(
+                f"{location}:{_DOWNLOAD_COUNTER}:{os.urandom(8).hex()}".encode()
+            ).hexdigest()[:32]
+            _PENDING_DOWNLOADS[download_id] = {"location": location}
+
+        host, port = self.server.advertise_host, self.server.advertise_port
+        url = f"http://{host}:{port}/download/{download_id}?token={REQUEST_TOKEN}"
+        self._send_json(200, {"ok": True, "signed_download_url": url, "matched_key": matched_key})
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -564,9 +778,50 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(400, {"message": f"unknown 'comp' value: {comp!r}"})
 
     def do_GET(self):
-        if self.path == "/healthz":
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/healthz":
             self._send_json(200, {"status": "ok"})
             return
+
+        if parsed.path.startswith("/download/"):
+            query = parse_qs(parsed.query)
+            if not self._query_token_authorized(query):
+                # Same reasoning as the upload leg's /upload/<id>: real
+                # Azure/AWS download semantics carry auth in the URL itself,
+                # not a bearer header, so the query-param token IS the real
+                # check here. Reject before touching any state or making an
+                # S3 call.
+                self._send_json(401, {"message": "missing or invalid 'token' query parameter"})
+                return
+
+            download_id = parsed.path[len("/download/"):]
+            with _STATE_LOCK:
+                entry = _PENDING_DOWNLOADS.get(download_id)
+            if entry is None:
+                self._send_json(404, {"message": "unknown or expired download id"})
+                return
+
+            try:
+                config = _get_output_config()
+                creds = _get_output_credentials(provider="s3")
+                data = _s3_get_object(config, creds, entry["location"])
+            except Exception as exc:  # noqa: BLE001
+                # actions/cache's downloadCache() treats a failed GET as a
+                # thrown error, caught by its own best-effort restore
+                # wrapper (a restore failure is never fatal to the build --
+                # see module docstring) -- logged here, not swallowed.
+                self.log_message("download failed for %s (location=%s): %s", download_id, entry["location"], exc)
+                self._send_json(500, {"message": f"could not fetch cache object: {exc}"})
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         self._send_json(404, {"message": "not found"})
 
     def do_HEAD(self):

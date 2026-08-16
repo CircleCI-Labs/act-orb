@@ -286,15 +286,17 @@ jobs:
   # Real integration coverage for the Actions-cache shim (added for family
   # parity with buildkite-gha's own cache support). Runs the shim against
   # the REAL, live CircleCI runner API in an actual job, drives an actual
-  # `actions/cache/save@v4` through act/act, and asserts the shim's own
-  # protocol translation ran for real (CreateCacheEntry served, at least one
-  # block accepted). It deliberately does NOT assert a cross-run cache hit:
-  # see cache_shim_server.py's module docstring and the README's cache-shim
-  # section for the reproduced, documented gap in $runner_host's own
-  # cache-save upload leg -- this test fails loudly if the *negotiation*
-  # regresses, and reports (without failing the build, matching
-  # actions/cache's own best-effort semantics) whatever the real,
-  # live outcome of the upload/restore leg is.
+  # `actions/cache/save@v4` then `actions/cache/restore@v4` through act/act
+  # in the SAME job, and asserts the shim's own protocol translation AND the
+  # real, SigV4-signed S3 upload/download leg both actually succeeded (see
+  # cache_shim_server.py's module docstring for the full contract this now
+  # implements: GET .../output/config -> GET .../output/credentials -> a
+  # real S3 PutObject/GetObject). A same-job save+restore does not by itself
+  # prove a *durable, cross-process* hit (this job's own shim process could
+  # in principle short-circuit) -- that is what
+  # test_cache_shim_durable_hit_save/restore below exist to prove, as two
+  # separate jobs with two separate shim processes and two separate sets of
+  # STS credentials.
   # Uses the `machine` executor (this orb's own documented default -- see
   # src/executors/default.yml), NOT docker+setup_remote_docker, for a real,
   # measured reason: setup_remote_docker gives you a REMOTE Docker daemon
@@ -314,9 +316,6 @@ jobs:
       image: ubuntu-2204:current
     steps:
       - checkout
-      - run:
-          name: "TEMPORARY diagnostic - probe cache-service-v2 config/credentials endpoints"
-          command: python3 test/cache-shim/probe_output_api.py
       - act/cache-shim
       - act/act:
           # checkout: false -- we already checked out once above.
@@ -336,7 +335,7 @@ jobs:
           force-install: false
           debug: true
       - run:
-          name: Assert the shim's own Twirp negotiation actually ran (regression gate)
+          name: Assert the shim's own negotiation AND the real S3 upload/download leg both succeeded
           command: |
             LOG=/tmp/.cache-shim/server.log
             if [ ! -f "$LOG" ]; then
@@ -352,23 +351,123 @@ jobs:
               exit 1
             fi
             echo "OK: shim served CreateCacheEntry successfully -- protocol negotiation works."
-            # PUT /upload/<id> ends either in a 201 (commit accepted by the
-            # fake/real backend) or a 500 (commit attempted, real backend
-            # upload leg 404d -- see the README's cache-shim section); either
-            # one proves the commit step (single-shot or blocklist,
-            # actions/cache picks whichever the file size calls for) was
-            # actually reached, not skipped.
-            if grep -qE 'PUT /upload/.*" (201|500)' "$LOG"; then
-              echo "OK: shim reached the upload-commit step (the real byte-persistence leg was attempted)."
-            fi
             if grep -q 'commit failed' "$LOG"; then
-              echo "NOTE (expected, documented, non-fatal): the real upload to CircleCI's own"
-              echo "runner API 404s past the cache-save 'ticket' -- see the README's cache-shim"
-              echo "section. actions/cache treats this as a non-fatal warning, not a build failure."
+              echo "Regression: the real S3 PutObject failed -- see cache_shim_server.py's module" >&2
+              echo "docstring for the contract this is supposed to satisfy (config -> credentials" >&2
+              echo "-> signed PutObject). This used to be an expected, documented gap; it is not" >&2
+              echo "anymore -- see the README's cache-shim section." >&2
+              exit 1
             fi
-            echo "This job proves the shim's protocol translation is real and exercised end to end"
-            echo "against the live CircleCI runner API; it does not (and today cannot) assert a"
-            echo "cross-run cache hit -- see the README for the honest, reproduced state of that gap."
+            if ! grep -qE 'PUT /upload/.*" 201' "$LOG"; then
+              echo "Regression: expected a 201 upload-commit response (real S3 PutObject succeeded)." >&2
+              exit 1
+            fi
+            echo "OK: the real, SigV4-signed S3 PutObject succeeded."
+            if ! grep -qE 'GET /download/.*" 200' "$LOG"; then
+              echo "Regression: expected a 200 on the download proxy (real S3 GetObject succeeded)." >&2
+              exit 1
+            fi
+            echo "OK: the real, SigV4-signed S3 GetObject succeeded."
+            echo "This job proves the shim's protocol translation AND the real upload/download leg"
+            echo "both work end to end against the live CircleCI runner API and real S3, within a"
+            echo "single job. See test_cache_shim_durable_hit_save/restore for cross-job proof."
+
+  # THE acceptance bar for closing the cache shim's upload/download gap: a
+  # DURABLE, CROSS-JOB cache hit, not just a same-job save+restore (which
+  # test_cache_shim above already covers, and which alone can't rule out
+  # some same-process shortcut). This job only SAVES a cache -- built from a
+  # value unique to this pipeline run (pipeline.number), so a stale hit from
+  # a previous run's object can't be mistaken for a fresh one -- and stops.
+  # test_cache_shim_durable_hit_restore below is a SEPARATE job (its own
+  # machine, its own act/cache-shim process, its own STS credentials fetched
+  # fresh from GET .../output/credentials) that `requires:` this one in the
+  # workflow below, so it only starts after this job's save has actually
+  # completed, then restores that exact key and diffs the bytes. The only
+  # way that restore job can produce a byte-identical file is a real round
+  # trip through CircleCI's runner API + S3 -- there is no shared local
+  # state between the two jobs' containers.
+  test_cache_shim_durable_hit_save:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - act/cache-shim
+      - act/act:
+          checkout: false
+          uses: actions/cache/save@v4
+          with: |
+            path: LICENSE
+            key: cache-shim-durable-hit-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the save leg's real S3 upload actually committed (not just negotiated)
+          command: |
+            LOG=/tmp/.cache-shim/server.log
+            echo "=== cache-shim server log ==="
+            cat "$LOG" 2>/dev/null || echo "(no log found)"
+            echo "=============================="
+            if ! grep -qE 'PUT /upload/.*" 201' "$LOG"; then
+              echo "FAIL: the real S3 PutObject for this durable-hit save did not commit (no 201" >&2
+              echo "on /upload/<id>) -- see cache_shim_server.py's module docstring for the" >&2
+              echo "upload contract this is supposed to satisfy." >&2
+              exit 1
+            fi
+            echo "OK: save committed via a real, SigV4-signed S3 PutObject."
+
+  # See test_cache_shim_durable_hit_save's own comment above -- this is the
+  # other half of the durable-hit proof. A fresh machine, a fresh
+  # act/cache-shim process, fresh STS credentials: the ONLY way LICENSE can
+  # come back byte-identical is a real S3 GetObject retrieving what the
+  # OTHER job's OTHER process uploaded.
+  test_cache_shim_durable_hit_restore:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - run:
+          name: Save the expected content, then delete the file so a restore is the only way it comes back
+          command: |
+            cp LICENSE /tmp/expected-license
+            rm -f LICENSE
+      - act/cache-shim
+      - act/act:
+          checkout: false
+          uses: actions/cache/restore@v4
+          with: |
+            path: LICENSE
+            key: cache-shim-durable-hit-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - run:
+          name: Assert LICENSE came back with the exact original bytes -- the real durable-hit proof
+          command: |
+            LOG=/tmp/.cache-shim/server.log
+            echo "=== cache-shim server log ==="
+            cat "$LOG" 2>/dev/null || echo "(no log found)"
+            echo "=============================="
+            if [ ! -f LICENSE ]; then
+              echo "FAIL: LICENSE was not restored at all -- no durable cache hit. actions/cache" >&2
+              echo "treats a restore miss as non-fatal (build proceeds cold), which is why this" >&2
+              echo "step has to check explicitly rather than relying on act/act's own exit code." >&2
+              exit 1
+            fi
+            if ! grep -qE 'GET /download/.*" 200' "$LOG"; then
+              echo "FAIL: LICENSE exists but the shim's own log shows no successful download proxy" >&2
+              echo "GET -- unexpected; investigate before trusting this as a real hit." >&2
+              exit 1
+            fi
+            if ! diff -q /tmp/expected-license LICENSE > /dev/null; then
+              echo "FAIL: restored LICENSE does not match the original bytes -- corruption somewhere" >&2
+              echo "in the save/upload/download/restore round trip." >&2
+              diff /tmp/expected-license LICENSE >&2 || true
+              exit 1
+            fi
+            echo "OK: DURABLE CROSS-JOB CACHE HIT PROVEN. LICENSE was saved by a completely"
+            echo "separate job (separate machine, separate shim process, separate STS"
+            echo "credentials), and this job restored the exact original bytes via a real,"
+            echo "signed S3 GetObject -- not a same-process shortcut, not a coincidence."
+
   # Real integration coverage for enabling Act's OWN built-in artifact
   # server (`--artifact-server-path`) -- added for family parity, and much
   # smaller than a from-scratch artifact shim would have been: Act already
@@ -752,6 +851,18 @@ workflows:
       - test_cache_shim:
           name: Testing Actions Cache Shim
           filters: *filters
+      - test_cache_shim_durable_hit_save:
+          name: Testing Cache Shim Durable Hit (save)
+          filters: *filters
+      - test_cache_shim_durable_hit_restore:
+          name: Testing Cache Shim Durable Hit (restore)
+          # Must run strictly AFTER the save job -- this is the whole point:
+          # a separate job, separate machine, separate shim process, that
+          # can only produce a byte-identical file via a real round trip
+          # through CircleCI's runner API and S3.
+          requires:
+            - Testing Cache Shim Durable Hit (save)
+          filters: *filters
       - test_artifacts:
           name: Testing Artifacts (Act's built-in server)
           filters: *filters
@@ -834,6 +945,8 @@ workflows:
             - "Testing Overriding Executor"
             - "Testing Running Workflow File"
             - "Testing Actions Cache Shim"
+            - "Testing Cache Shim Durable Hit (save)"
+            - "Testing Cache Shim Durable Hit (restore)"
             - "Testing Artifacts (Act's built-in server)"
             - "Testing GHA Workflow Compiler (compile)"
             - "Testing GHA Workflow Compiler (render + run)"
