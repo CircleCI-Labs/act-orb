@@ -45,21 +45,51 @@ def read_task_token(sock_path):
     return parsed["token"], parsed["runner_host"]
 
 
+# Values whose contents must never be printed. /api/v2/output/credentials returns
+# live, task-scoped AWS credentials; printing the raw body would put a real
+# SecretAccessKey and SessionToken into the CircleCI job log in plaintext, and this
+# repo is public -- so anyone copying this diagnostic would leak their own. The
+# shape is what this tool exists to reveal, and the shape is fully visible with the
+# values redacted.
+SECRET_KEYS = frozenset(
+    {"SecretAccessKey", "SessionToken", "AccessKeyID", "Token", "token"}
+)
+
+
+def _redact(value):
+    """Recursively replace secret-bearing leaf values with a length-only summary."""
+    if isinstance(value, dict):
+        return {
+            k: (f"<redacted, {len(str(v))} chars>" if k in SECRET_KEYS else _redact(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(v) for v in value]
+    return value
+
+
 def get(url, token):
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             body = resp.read().decode("utf-8", "replace")
             print(f"=== GET {url} -> {resp.status} ===")
-            print(body)
             try:
-                return json.loads(body)
+                parsed = json.loads(body)
             except Exception:  # noqa: BLE001
+                # Not JSON, so it can't be structurally redacted. Print only the
+                # length rather than risk emitting a secret in an unexpected shape.
+                print(f"<non-JSON body, {len(body)} chars, withheld>")
                 return None
+            print(json.dumps(_redact(parsed), indent=2, sort_keys=True))
+            return parsed
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")
         print(f"=== GET {url} -> HTTP {exc.code} ===")
-        print(detail)
+        try:
+            print(json.dumps(_redact(json.loads(detail)), indent=2, sort_keys=True))
+        except Exception:  # noqa: BLE001
+            print(f"<non-JSON error body, {len(detail)} chars, withheld>")
         return None
     except Exception as exc:  # noqa: BLE001
         print(f"=== GET {url} -> EXCEPTION: {exc} ===")
