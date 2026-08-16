@@ -39,11 +39,25 @@ jobs:
   # asserts the action's real `time` output (see its action.yml) actually
   # lands in $BASH_ENV as a plain shell variable, not just that the job
   # exits zero.
+  # Uses the `machine` executor (this orb's own documented default -- see
+  # src/executors/default.yml and the test_cache_shim job's own comment
+  # below), NOT docker+setup_remote_docker: setup_remote_docker gives you a
+  # REMOTE Docker daemon that cannot see this job container's own
+  # filesystem, so --bind (a volume mount, enabled by default) silently
+  # shares nothing, and the outputs handoff file Act writes inside its
+  # container never makes it back to this job's own working directory for
+  # `collect-outputs` to read. Confirmed live on job 1552: "Run Act" showed
+  # Act's own `::set-output:: time=...` firing successfully inside its
+  # container, but the very next step ("Collect Act's output(s) into
+  # $BASH_ENV") logged "No output handoff file found at
+  # ./.act-orb-outputs.env -- nothing to collect" -- i.e. the file that
+  # step needed was never shared back across the remote-daemon boundary.
+  # Switching to `machine` (a real local Docker daemon `--bind` can actually
+  # share with) is this same fix already proven for test_cache_shim et al.
   test_output_capture:
-    docker:
-      - image: cimg/base:current
+    machine:
+      image: ubuntu-2204:current
     steps:
-      - setup_remote_docker
       - act/act:
           uses: actions/hello-world-javascript-action@v1.1
           with: |
@@ -64,11 +78,13 @@ jobs:
   # regenerates or truncates the handoff file this call), must not leave a
   # leftover handoff file from the first call's `outputs` capture sitting
   # around for `collect-outputs` to silently re-read as if it were fresh.
+  # Same `machine`-vs-docker+setup_remote_docker reasoning as
+  # test_output_capture immediately above -- this job also relies on
+  # `outputs` capture (twice, in fact) across the --bind boundary.
   test_stale_outputs_guard:
-    docker:
-      - image: cimg/base:current
+    machine:
+      image: ubuntu-2204:current
     steps:
-      - setup_remote_docker
       - act/act:
           uses: actions/hello-world-javascript-action@v1.1
           with: |
@@ -305,12 +321,11 @@ jobs:
   # this repo's own already-committed LICENSE file failed with "No files
   # were found with the provided path: LICENSE" under setup_remote_docker;
   # switching to `machine` (a real local Docker daemon) fixed it immediately
-  # with no other change. This is very likely also the root cause of the
-  # pre-existing, out-of-scope test_output_capture/test_stale_outputs_guard
-  # failures noted in this repo's own history -- both also rely on `--bind`
-  # under docker+setup_remote_docker -- but fixing those is out of scope
-  # here; this comment just records the likely shared root cause for
-  # whoever picks that up next.
+  # with no other change. This was confirmed to be the same root cause of the
+  # once pre-existing test_output_capture/test_stale_outputs_guard failures
+  # (both also relied on `--bind` under docker+setup_remote_docker) -- see
+  # those jobs' own comments above for the confirming log evidence; they were
+  # switched to `machine` too and now pass.
   test_cache_shim:
     machine:
       image: ubuntu-2204:current
