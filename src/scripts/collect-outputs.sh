@@ -1,12 +1,6 @@
 #!/bin/bash
 set -uo pipefail
 
-# TEMPORARY, INTENTIONAL BREAKAGE -- do not merge. Proves test_output_capture
-# and test_stale_outputs_guard's assertions actually fail when output capture
-# is genuinely broken, rather than passing regardless. Will be reverted
-# before this branch merges.
-exit 0
-
 OUTPUTS_PATH="${ORB_VAL_DIRECTORY%/}/${ORB_VAL_OUTPUTS_FILE}"
 
 if [ ! -f "${OUTPUTS_PATH}" ]; then
