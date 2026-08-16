@@ -635,6 +635,96 @@ jobs:
 
             echo "All boolean-encoding regression cases passed."
 
+  # Hostile-input coverage gap-closer for run-act.sh's `additional-act-flags`: the README's own
+  # command reference (`| additional-act-flags | string | "" | Extra flags passed verbatim to the
+  # act CLI (word-split, unlike every other parameter here). |`) flags this as the one run-act.sh
+  # parameter that gets real shell word-splitting rather than passing through as a single argv
+  # element -- the same category of "untrusted data reaching a shell" the with/env/services notes
+  # cover for create-workflow-file.sh, just word-splitting instead of YAML embedding. Drives
+  # run-act.sh directly with a fake `act` binary that logs each argv element on its own line (so
+  # word-splitting is visible), and pins two things: (1) a value containing `$(...)`/backtick
+  # command-substitution syntax is never executed -- bash's word-splitting on an already-expanded
+  # variable does NOT re-parse or evaluate embedded command-substitution syntax, only the literal
+  # source text `$(...)`/`` `...` `` does, so this is expected to be safe, but it is exactly the
+  # kind of assumption that deserves a real regression test, not just a comment; (2) embedded
+  # quote characters in the value are themselves treated as literal characters PART OF a
+  # whitespace-delimited word, not as grouping -- `"quoted value with spaces"` splits into four
+  # separate argv elements (`"quoted`, `value`, `with`, `spaces"`), not one. This does NOT fix
+  # anything -- it pins the CURRENT, documented word-splitting behavior so a future change is a
+  # deliberate, visible decision instead of a silent one that leaves the README's own claim stale.
+  test_run_act_additional_flags_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: "Hostile input - additional-act-flags word-splits, but never executes embedded command substitution"
+          command: |
+            set -euo pipefail
+            fakebin="$(mktemp -d)"
+            call_log="$(mktemp)"
+            pwn_subshell="$(mktemp -u)"
+            pwn_backtick="$(mktemp -u)"
+            # printf avoids the same heredoc/pipeline-parameter-substitution pitfall the
+            # boolean-encoding test job above documents -- one arg per line makes word-splitting
+            # visible in the log.
+            {
+              printf '#!/bin/bash\n'
+              printf 'for a in "$@"; do printf "%%s\\n" "$a" >> "${ACT_CALL_LOG}"; done\n'
+            } > "${fakebin}/act"
+            chmod +x "${fakebin}/act"
+
+            wf="$(mktemp)"
+            missing="$(mktemp -u)"
+            hostile="--container-architecture linux/amd64 \$(touch ${pwn_subshell}) \`touch ${pwn_backtick}\` \"quoted value with spaces\""
+
+            PATH="${fakebin}:${PATH}" \
+              ACT_CALL_LOG="${call_log}" \
+              ORB_VAL_WORKFLOW_FILE="${wf}" \
+              ORB_VAL_PLATFORM="ubuntu-latest=catthehacker/ubuntu:act-latest" \
+              ORB_VAL_ENV_FILE="${missing}.env" \
+              ORB_VAL_SECRET_FILE="${missing}.secrets" \
+              ORB_VAL_INPUT_FILE="${missing}.input" \
+              ORB_VAL_VAR_FILE="${missing}.vars" \
+              ORB_VAL_EVENT_FILE="${missing}.event" \
+              ORB_VAL_ACTOR="nektos/act" \
+              ORB_VAL_VERBOSE="false" \
+              ORB_VAL_DIRECTORY="." \
+              ORB_VAL_DEFAULT_BRANCH="main" \
+              ORB_VAL_JOB="" \
+              ORB_VAL_REMOTE_NAME="origin" \
+              ORB_VAL_ADDITIONAL_ACT_FLAGS="${hostile}" \
+              ORB_VAL_ARTIFACT_SERVER_PATH="" \
+              ORB_VAL_ARTIFACT_SERVER_ADDR="" \
+              ORB_VAL_ARTIFACT_SERVER_PORT="" \
+              ORB_VAL_OUTPUTS="" \
+              ORB_VAL_OUTPUTS_FILE=".act-orb-outputs.env" \
+              ORB_VAL_PULL="true" \
+              ORB_VAL_REBUILD="true" \
+              ORB_VAL_REUSE="false" \
+              ORB_VAL_BIND="true" \
+              ORB_VAL_DETECT_EVENT="false" \
+              ORB_VAL_ACTION_OFFLINE_MODE="false" \
+              bash src/scripts/run-act.sh > /dev/null
+
+            echo "=== logged argv (one element per line) ==="
+            cat "${call_log}"
+            echo "==========================================="
+
+            if [ -e "${pwn_subshell}" ] || [ -e "${pwn_backtick}" ]; then
+              echo "FAIL: embedded command substitution in additional-act-flags actually executed" >&2
+              exit 1
+            fi
+            echo "OK: no command substitution executed -- word-splitting never re-evaluates the value."
+
+            grep -qxF -- '$(touch' "${call_log}" || { echo "FAIL: expected the literal, unexecuted token '\$(touch' as its own argv element" >&2; exit 1; }
+            grep -qxF -- "${pwn_subshell})" "${call_log}" || { echo "FAIL: expected the literal token '${pwn_subshell})' as its own argv element" >&2; exit 1; }
+            grep -qxF -- '`touch' "${call_log}" || { echo "FAIL: expected the literal, unexecuted token '\`touch' as its own argv element" >&2; exit 1; }
+            grep -qxF -- '"quoted' "${call_log}" || { echo "FAIL: expected embedded quote chars to stay literal (word-splitting doesn't strip them) -- '\"quoted' as its own element" >&2; exit 1; }
+            grep -qxF -- 'spaces"' "${call_log}" || { echo "FAIL: expected 'spaces\"' as its own element -- the quoted phrase should be FOUR separate argv elements, not one" >&2; exit 1; }
+            echo "OK: word-splitting behaves exactly as documented -- plain whitespace splitting,"
+            echo "no quote-grouping, no command-substitution re-evaluation."
+
   # Direct script-level tests (added for family parity -- the four vendor orbs all invoke their
   # own scripts directly with ORB_VAL_* env vars and assert on exact error text for hostile
   # input; act-orb had zero direct script tests before this job, every script was only exercised
@@ -940,6 +1030,9 @@ workflows:
       - test_run_act_booleans:
           name: Testing Boolean Parameter Encoding
           filters: *filters
+      - test_run_act_additional_flags_script:
+          name: Testing run-act.sh additional-act-flags Directly
+          filters: *filters
       - test_create_workflow_file_script:
           name: Testing create-workflow-file.sh Directly
           filters: *filters
@@ -1027,6 +1120,7 @@ workflows:
             - "Testing GHA Workflow Compiler (matrix)"
             - "Testing GHA Workflow Compiler (self-hosted runner)"
             - "Testing Boolean Parameter Encoding"
+            - "Testing run-act.sh additional-act-flags Directly"
             - "Testing create-workflow-file.sh Directly"
             - "Testing create-env-var-secret-files.sh Directly"
             - "Testing collect-outputs.sh Directly"
