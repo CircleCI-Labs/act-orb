@@ -173,6 +173,7 @@ func TestFixtures(t *testing.T) {
 		{file: "../../fixtures/09-matrix-include.yml", wantJobs: []string{"build", "publish"}},
 		{file: "../../fixtures/10-matrix-needs.yml", wantJobs: []string{"build", "deploy"}},
 		{file: "../../fixtures/11-self-hosted-runner.yml", wantJobs: []string{"build"}},
+		{file: "../../fixtures/12-matrix-exclude.yml", wantJobs: []string{"test"}},
 	}
 	for _, c := range cases {
 		data, err := os.ReadFile(c.file)
@@ -277,6 +278,79 @@ func TestMatrixInclude(t *testing.T) {
 	names := build.requirableNames()
 	if !stringSlicesEqual(names, []string{"build", extraName}) {
 		t.Errorf("requirableNames() = %v, want [build %s]", names, extraName)
+	}
+}
+
+// TestMatrixExcludeRenderText is the regression test for the render-time
+// off-by-one that TestExpandExcludePartial and its data-expansion neighbors
+// below could never catch: those only exercise matrix.go's expansion of
+// exclude: into Go data, never render.go's rendering of that data into YAML
+// text. A two-key exclude entry used to render its second key one depth too
+// deep (see fixtures/12-matrix-exclude.yml and render.go's
+// renderWorkflowJobEntry), producing a config that `circleci config
+// validate` rejects with "expected <block end>, but found '<block mapping
+// start>'" -- silently, since Compile() itself returns no error. This test
+// asserts on the exact rendered text (so a regression is caught even
+// without a real CircleCI CLI to hand), and also round-trips the output
+// back through yaml.v3 to confirm the exclude entry parses as ONE mapping
+// with both keys as true siblings, not one key nested under the other.
+func TestMatrixExcludeRenderText(t *testing.T) {
+	data, err := os.ReadFile("../../fixtures/12-matrix-exclude.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Compile(data, "12-matrix-exclude.yml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Exact rendered text: past the "- ", the dash line's key and its
+	// sibling key must sit at the SAME indentation (depth 8 / 16 spaces),
+	// not depth 9 / 18 spaces.
+	wantBlock := "            exclude:\n" +
+		"              - node-version: \"18\"\n" +
+		"                os: \"ubuntu-22.04\"\n"
+	if !strings.Contains(res.ConfigYAML, wantBlock) {
+		t.Errorf("rendered exclude: block does not match the expected indentation.\nwant substring:\n%s\ngot config:\n%s", wantBlock, res.ConfigYAML)
+	}
+
+	// Round-trip through yaml.v3: the exclude entry must parse as a single
+	// flat mapping with both keys, which is exactly what the bug broke
+	// (the second key parsed as a nested value of the first instead).
+	var generic map[string]any
+	if err := yaml.Unmarshal([]byte(res.ConfigYAML), &generic); err != nil {
+		t.Fatalf("generated config is not valid YAML: %v", err)
+	}
+	workflows, _ := generic["workflows"].(map[string]any)
+	genWf, _ := workflows["generated-from-github-workflow"].(map[string]any)
+	jobsList, _ := genWf["jobs"].([]any)
+	var testInvocation map[string]any
+	for _, entry := range jobsList {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if inv, ok := m["test"].(map[string]any); ok {
+			testInvocation = inv
+		}
+	}
+	if testInvocation == nil {
+		t.Fatal("could not find the 'test' job invocation in the parsed workflow jobs list")
+	}
+	matrix, _ := testInvocation["matrix"].(map[string]any)
+	excludeList, _ := matrix["exclude"].([]any)
+	if len(excludeList) != 1 {
+		t.Fatalf("expected exactly 1 exclude entry, got %d: %v", len(excludeList), excludeList)
+	}
+	entry, ok := excludeList[0].(map[string]any)
+	if !ok {
+		t.Fatalf("exclude entry did not parse as a flat mapping (the exact misparse this bug caused): %#v", excludeList[0])
+	}
+	if len(entry) != 2 {
+		t.Fatalf("expected the exclude entry to have both matrix keys as siblings (2 keys), got %d: %v", len(entry), entry)
+	}
+	if entry["node-version"] != "18" || entry["os"] != "ubuntu-22.04" {
+		t.Errorf("exclude entry = %v, want {node-version: 18, os: ubuntu-22.04}", entry)
 	}
 }
 

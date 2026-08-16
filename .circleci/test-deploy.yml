@@ -216,6 +216,17 @@ jobs:
   # asserts the generated config contains a real matrix: stanza, then
   # validates it against the real CLI end to end -- proving the compiler
   # output is actually acceptable CircleCI config, not just well-formed YAML.
+  #
+  # Also compiles+validates 12-matrix-exclude.yml (a two-key matrix with an
+  # exclude: entry) in the same job: this is the regression coverage for a
+  # real bug found in render.go's exclude: rendering (a two-or-more-key
+  # exclude entry rendered its second key one indentation depth too deep,
+  # which `circleci config validate` rejected but `ghac compile` itself did
+  # not -- exiting 0 with a broken config). 08-matrix-2x2.yml alone can't
+  # catch this: it has no exclude: at all. The Go-level unit tests
+  # (TestMatrixExcludeRenderText, internal/compile/compile_test.go) cover the
+  # same case without a real CLI; this step is what proves the fix against
+  # the actual CircleCI config parser, end to end, in CI.
   test_gha_compile_matrix:
     docker:
       - image: cimg/base:current
@@ -229,12 +240,22 @@ jobs:
           command: |
             grep -q "matrix:" /tmp/generated-matrix-config.yml
             grep -q "parameters:" /tmp/generated-matrix-config.yml
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/12-matrix-exclude.yml
+          out: /tmp/generated-matrix-exclude-config.yml
+      - run:
+          name: "Sanity check the exclude: block is actually present"
+          command: |
+            grep -q "exclude:" /tmp/generated-matrix-exclude-config.yml
       - run:
           name: Install CircleCI CLI
           command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
       - run:
           name: Validate the generated matrix config against the real CLI
           command: circleci config validate --config /tmp/generated-matrix-config.yml
+      - run:
+          name: Validate the generated matrix+exclude config against the real CLI
+          command: circleci config validate --config /tmp/generated-matrix-exclude-config.yml
   # Integration coverage for runs-on: self-hosted -> CircleCI self-hosted
   # runner resource classes (added for family parity). Deliberately does NOT
   # run `circleci config validate` here: the generated config's own

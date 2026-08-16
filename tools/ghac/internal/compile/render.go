@@ -176,19 +176,29 @@ func renderWorkflowJobEntry(b *indentBuf, j *Job, byID map[string]*Job) {
 		if len(j.Matrix.Exclude) > 0 {
 			b.line(6, "exclude:")
 			for _, combo := range j.Matrix.Exclude {
-				// Same dash-with-nested-keys indentation rule as elsewhere
-				// in this file (see the NOTE in renderJob's caller below):
-				// the dash line is at depth 7, so its OTHER keys must sit
-				// at depth 9 (d+2), not 8 — depth 8 would land back at the
-				// same column as the first key and get silently reparsed
-				// as a second, unrelated mapping key.
+				// NOT the same shape as the NOTE in renderJob above (the
+				// "- key:" pattern used elsewhere in this file, where a
+				// single key on the dash line opens its own nested mapping,
+				// and it's THAT mapping's keys that sit at d+2). Here the
+				// dash line's first key is one of several SIBLING keys
+				// directly inside the sequence item's own mapping -- there
+				// is no wrapping key to nest under. line(depth) emits
+				// depth*2 spaces, so a dash at depth 7 emits 14 spaces then
+				// "- ", putting the first key's text at column 16 -- i.e.
+				// depth 8 (8*2=16), not depth 9. Sibling keys must align to
+				// that SAME column to stay in the same mapping, so they
+				// belong at depth 8, not depth 9: depth 9 (18 spaces)
+				// indents past the first key and gets reparsed as a nested
+				// value under it, which is exactly the "expected <block
+				// end>, but found '<block mapping start>'" error `circleci
+				// config validate` raises on any exclude entry with 2+ keys.
 				first := true
 				for _, k := range j.Matrix.Keys {
 					if first {
 						b.line(7, "- %s: %q", k, combo[k])
 						first = false
 					} else {
-						b.line(9, "%s: %q", k, combo[k])
+						b.line(8, "%s: %q", k, combo[k])
 					}
 				}
 			}
