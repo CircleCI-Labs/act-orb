@@ -314,6 +314,9 @@ jobs:
       image: ubuntu-2204:current
     steps:
       - checkout
+      - run:
+          name: "TEMPORARY diagnostic - probe cache-service-v2 config/credentials endpoints"
+          command: python3 test/cache-shim/probe_output_api.py
       - act/cache-shim
       - act/act:
           # checkout: false -- we already checked out once above.
