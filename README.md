@@ -47,9 +47,9 @@ together](#how-it-fits-together) for exactly how the two connect.
 - Mint a real, CircleCI-signed OIDC token for actions that call `core.getIDToken()` (e.g.
   `aws-actions/configure-aws-credentials`) -- Act itself implements none of GitHub's own OIDC
   issuance (see [OIDC token issuance for wrapped Actions](#oidc-token-issuance-for-wrapped-actions)).
-- Translate `actions/cache@v4`'s real protocol against CircleCI's own runner API (see
-  [Actions cache shim](#actions-cache-shim) -- restore/negotiation proven, a durable save is a
-  documented, in-progress gap, not silently pretended to work).
+- Translate `actions/cache@v4`'s real protocol against CircleCI's own runner API, with a real,
+  SigV4-signed S3 upload/download leg -- durable, cross-job cache hits are proven in this orb's own
+  CI (see [Actions cache shim](#actions-cache-shim)).
 - Enable Act's own built-in artifact server for `actions/upload-artifact`/`download-artifact@v4`
   (see [Artifacts](#artifacts)).
 
@@ -231,7 +231,7 @@ CircleCI without re-deriving it construct by construct.
 | **`GITHUB_OUTPUT`** (the file an action or `run:` step writes `key=value` lines to) | **`$BASH_ENV`** | GitHub's runner watches a well-known file path and threads its contents into `steps.<id>.outputs.*` for the rest of the *workflow run* to reference via expressions. CircleCI has no equivalent expression-evaluation layer over step outputs -- `$BASH_ENV` is CircleCI's own mechanism for "a value computed in one step should be visible as a shell variable in later steps of the *same job*." This orb's `outputs`/`collect-outputs` bridges the two: it lets Act's own expression evaluation (`${{ steps.<id>.outputs.<key> }}`) resolve the value inside the container, writes it to a handoff file, then a later step exports it into `$BASH_ENV` for the rest of the CircleCI job. See [Capturing action outputs](#capturing-action-outputs) for the full mechanism and its two documented failure modes. |
 | **`needs.<job>.outputs.<name>`** (cross-*job* output) | **Workspace** (`persist_to_workspace`/`attach_workspace`) plus an `env` rewrite | `$BASH_ENV` only reaches later steps in the *same* job; crossing a job boundary on CircleCI means moving a file through the workspace, the platform's own cross-job data-passing primitive. The compiler captures the named output into a small file, persists it to the workspace from the producing job, attaches it in every job that referenced it, and rewrites the `${{ needs.<job>.outputs.<name> }}` expression (the exact whole expression, not a fragment) to `${{ env.* }}` sourced from that file. This is why the compiler table below draws a hard line at *combining* `needs.*` with other operators or a function call: the rewrite is textual and exact, not a real expression evaluator. |
 | **`core.getIDToken()` / OIDC** | **`act/oidc-shim`**, backed by CircleCI's own native OIDC issuer | Not a mapping onto an existing CircleCI primitive so much as a bridge to one: CircleCI already has its own OIDC token issuance (`circleci run oidc get`, and the always-injected `CIRCLE_OIDC_TOKEN`/`CIRCLE_OIDC_TOKEN_V2`) for exactly this cloud-role-assumption use case -- it's just shaped, claimed, and requested differently than GitHub's. `act/oidc-shim` answers the wrapped action's own GitHub-shaped OIDC request contract with a real, CircleCI-signed token; see [OIDC token issuance for wrapped Actions](#oidc-token-issuance-for-wrapped-actions) for why the token identifies CircleCI, not GitHub, and what that means for your cloud role's trust policy. |
-| **`actions/cache@v4`** | **`act/cache-shim`**, backed by CircleCI's runner API | Same shape of bridge as OIDC: CircleCI's runner API has its own cache-save/cache-restore endpoints; this orb speaks GitHub's real cache-service-v2 wire protocol on one side and CircleCI's runner API on the other. Unlike OIDC, this one has an honestly-documented gap -- see [Actions cache shim](#actions-cache-shim) for exactly what's proven and what isn't. |
+| **`actions/cache@v4`** | **`act/cache-shim`**, backed by CircleCI's runner API + S3 | Same shape of bridge as OIDC: CircleCI's runner API has its own cache-save/cache-restore endpoints; this orb speaks GitHub's real cache-service-v2 wire protocol on one side and CircleCI's runner API (plus a real, SigV4-signed S3 upload/download leg) on the other. See [Actions cache shim](#actions-cache-shim) for the full contract and the cross-job durable-hit proof. |
 | **`actions/upload-artifact`/`download-artifact`** | **`store_artifacts`**, via Act's own built-in artifact server | CircleCI's artifact concept (files attached to a job, browsable after the fact) is close enough to GitHub's that no protocol bridge was needed here -- Act already ships a complete, working implementation of GitHub's real artifact-v4 protocol; this orb only had to expose the flag that turns it on and point a native `store_artifacts` step at the same directory. See [Artifacts](#artifacts). |
 
 ## Defaults that deviate from Act
@@ -290,20 +290,20 @@ upgrading, not a caching regression.
 `act/cache-shim` translates GitHub's Actions-cache-service-v2 protocol -- what `actions/cache@v4`
 (and every `setup-*` action with built-in caching) actually speaks -- into calls against
 CircleCI's own runner API, so the wrapped action's cache calls hit a real server instead of
-Act's own ephemeral, local-disk-only cache. It is a real, ~500-line protocol implementation
+Act's own ephemeral, local-disk-only cache. It is a real, ~650-line protocol implementation
 (`src/scripts/cache_shim_server.py`), not a stub, and it is exercised for real in this orb's own
-CI (`test_cache_shim` in `.circleci/test-deploy.yml`) against the live CircleCI runner API on
-every pipeline run.
+CI against the live CircleCI runner API **and real AWS S3** on every pipeline run.
 
-**Be precise about what that proves and what it doesn't.** The RPC negotiation, auth enforcement,
-and block-blob chunked-upload reassembly are all proven, both locally (`test/cache-shim/run_tests.py`,
-18/18 passing against a correct fake backend -- run it yourself: `python3 test/cache-shim/run_tests.py`)
-and against the real CircleCI API. What is **not yet proven** is a durable cross-run cache
-**hit**: CircleCI's own `/api/v2/output/cache-save` endpoint does not hand back a usable upload
-target from a plain job's task-token scope -- see "The known, real gap" below for the full,
-reproduced evidence. `actions/cache` itself treats a save failure as a non-fatal warning (never a
-build failure -- this is real GitHub Actions behavior too, caching is always best-effort), so
-wiring this shim in today is safe; it just does not yet make your cache durable.
+**Be precise about what that proves.** The RPC negotiation, auth enforcement, block-blob
+chunked-upload reassembly, and the upload/download leg itself are all proven -- locally
+(`test/cache-shim/run_tests.py`, 23/23 passing against a fake backend that models the full
+contract, including a fake S3 the shim's real signer PUTs/GETs against) and against the real,
+live CircleCI API and S3. A **durable, cross-job cache hit** is proven too, not just a same-job
+save+restore: `test_cache_shim_durable_hit_save`/`test_cache_shim_durable_hit_restore` in
+`.circleci/test-deploy.yml` are two *separate* jobs -- separate machine, separate `act/cache-shim`
+process, separate STS credentials fetched fresh for the restore leg -- where the second job
+`requires:` the first and asserts a byte-for-byte diff against the original file. See "How the
+protocol translation works" below for the contract this closes and how it was found.
 
 ### Quick start
 
@@ -374,11 +374,8 @@ Verified directly against `actions/toolkit`'s real source (`packages/cache/src/c
   single-shot path).
 - `FinalizeCacheEntryUpload{key,version,size_bytes}` gets back `{ok, entry_id}`.
 - `GetCacheEntryDownloadURL{key,restore_keys,version}` gets back `{ok, signed_download_url,
-  matched_key}` on a hit, `{ok:false}` on a miss. Unlike upload, a real download URL needs **no**
-  shim proxying at all once one exists: `actions/cache`'s own `downloadCache()` only special-cases
-  `*.blob.core.windows.net` hostnames for the Azure SDK path -- anything else, a CircleCI URL
-  included, goes through a plain HTTP GET. So this shim can, in principle, hand back CircleCI's
-  own presigned GET URL directly and step out of the way entirely for downloads.
+  matched_key}` on a hit, `{ok:false}` on a miss. `signed_download_url` points at this shim's own
+  `/download/<id>` proxy, not a bare CircleCI/S3 URL -- see below for why.
 
 Each RPC is translated into a call against CircleCI's own `$runner_host/api/v2/output/cache-save`
 / `cache-restore`, authenticated with the per-job task token read once, at this shim's own
@@ -388,48 +385,55 @@ startup, from `/tmp/circleci-ts.sock` (a plain, no-HTTP-framing unix socket that
 that socket is a fatal, clearly-messaged startup error, not a silent no-op -- self-hosted runners
 or future CircleCI changes may not have it.
 
-### The known, real gap
+### The real upload/download contract, and how the old "known gap" was closed
 
-`$runner_host/api/v2/output/cache-save` does **not** return a presigned PUT URL the way
-`actions/cache`'s own protocol would lead you to expect. It returns a small JSON *ticket*:
+An earlier version of this shim read `cache-save`'s response as a presigned-PUT-style ticket and
+POSTed the archive bytes straight to `$runner_host/<location>`. Every construction of that
+404'd, repeatedly, across many real pipeline runs (`POST`/`PUT`/`GET`/`HEAD`/`OPTIONS`, with and
+without the `.tar.zst` suffix, with the path prefixed under `/api/v2/output/`,
+`/api/v2/storage/`, `/api/v2/task/storage/` -- all 404). The 404s were real; the diagnosis was
+wrong. `location` was never a route on `runner_host` at all.
 
-```json
-{"method":"POST","location":"storage/caches/<id>/<key>.tar.zst","tags":{"expiration_days":"15"}}
-```
+Read directly from CircleCI's own `circleci/output` (the server behind `runner.circleci.com`) and
+`circleci/task-agent-subcommand-cache` (a real, independent production consumer of the identical
+API, used today for Bazel/Gradle/Xcode-CAS/Turborepo caching) source, then confirmed live against
+this shim's own CI job:
 
-The obvious reading -- POST the archive bytes to `$runner_host/<location>` -- was tested directly
-against a real CircleCI job, repeatedly, across many separate pipeline runs, and **every
-construction 404s**:
+- `GET {runner_host}/api/v2/output/config` (bearer = task token) returns, on real CircleCI SaaS:
+  ```json
+  {"type":"s3","endpoint":"","region":"us-east-1","bucket":"circleci-tasks-prod", ...}
+  ```
+  `type` is always `"s3"` on SaaS (a `"pre-signed"` mode exists in the server's own code but is
+  documented there as enterprise-only).
+- `GET {runner_host}/api/v2/output/credentials?provider=s3` (same bearer) returns short-lived
+  (~15 minutes, observed live) per-task AWS STS credentials, scoped by IAM policy to this task's
+  own storage prefixes only:
+  ```json
+  {"s3":{"AccessKeyID":"...","SecretAccessKey":"...","SessionToken":"...","Expires":"..."}}
+  ```
+- The cache-save ticket's `location` (e.g. `storage/caches/<projectID>/<key>.tar.zst`) is a raw
+  **S3 object key** in the bucket from `config` -- not a URL fragment. The real upload is a
+  normal, SigV4-signed S3 `PutObject` using the credentials above, with the ticket's `tags` sent
+  as the `x-amz-tagging` header (an S3 lifecycle/retention hint, not a general metadata channel).
+  Download is symmetric: `cache-restore`'s `location` is the same kind of key, fetched with a
+  SigV4-signed S3 `GetObject`.
 
-- `POST`/`PUT`/`GET`/`HEAD`/`OPTIONS` against `{runner_host}/{location}`, with and without the
-  `.tar.zst` suffix, and with the `storage/...` path additionally prefixed under
-  `/api/v2/output/`, `/api/v2/storage/`, `/api/v2/task/storage/` -- all 404, either a JSON
-  `{"message":"Route Not Found"}` (a real router, just the wrong sub-path) or a bare `404 page
-  not found` (a different framework entirely on some prefixes -- the two distinct 404 shapes are
-  themselves evidence these are different services).
-- The older, publicly-documented `POST /api/v2/task/storage/cache-save` (seen working, with a
-  real `{url}` presigned-URL response, in `CircleCI-Public/circleci-steps-sdk-ts`'s
-  `SaveCache.ts`) is itself `404 {"message":"routing error"}` on the live API -- that endpoint no
-  longer exists.
-- `OPTIONS` on `cache-save` itself (to see if a framework's default 405/404 leaks an `Allow:`
-  header or a route list), an inline base64 `content` field on the save call itself, and half a
-  dozen generic `/api/v2/output/upload`-shaped guesses were all tried too; none exists.
+`cache_shim_server.py` implements AWS Signature Version 4 from scratch --
+`_sigv4_authorization()`, `_s3_put_object()`, `_s3_get_object()` -- using only stdlib `hmac`/
+`hashlib`, no boto3/botocore, matching this shim's existing zero-extra-install constraint. Because
+`actions/cache`'s real Azure `BlockBlobClient` can't present AWS credentials of its own, the
+upload path stays a *local* proxy exactly as before (`/upload/<id>`, this shim's own
+request-token auth) -- what changed is what happens when that local proxy commits: a real, signed
+S3 `PutObject` instead of a plain unsigned POST to `runner_host`. Download works the same way in
+reverse: `GetCacheEntryDownloadURL` hands back a URL at this shim's own `/download/<id>`, which
+performs the signed S3 `GetObject` itself and streams the bytes back -- `actions/cache` never
+needs to see (or sign for) an S3 URL directly.
 
-This strongly suggests `cache-save`'s task-token scope is **metadata-only** from a plain job
-container: it can register a cache key/version, but the actual object bytes move through a
-channel only CircleCI's own runner-agent process has, not something a job step (this shim
-included) can reach over public HTTP. This is a real, reproduced finding from direct
-experimentation against production, not a guess. `_redeem_cache_save_ticket()`/
-`_resolve_download_url()` in `cache_shim_server.py` still make the documented-shape attempt
-anyway (so this starts working automatically, with no code change, the moment CircleCI's backend
-exposes the real path) but treat failure as the expected, logged, non-fatal outcome it is today.
-
-**If you want to close this gap:** the mission that produced this shim was told
-`circleci/task-agent-subcommand-cache` already ships exactly this architecture successfully for
-Bazel/Gradle/Turborepo caching. That repo's source is the fastest path to the real answer -- it
-was not reachable from this sandbox, but whoever has access to it should be able to read off the
-correct way to redeem a `cache-save` ticket in minutes rather than re-deriving it through more
-trial and error against production.
+`actions/cache` still treats a save failure as a non-fatal warning and a restore miss as
+`undefined` (cold build) -- unchanged, and still the right safety net for what this shim can't
+yet handle (a job long enough to outlive the ~15-minute STS credential window during a single
+huge upload; each S3 call fetches fresh credentials rather than caching them, which bounds but
+does not eliminate that risk).
 
 ### Security notes
 
@@ -444,13 +448,20 @@ discarding its own auth header (see that section above) -- applied here from the
   `secrets.token_urlsafe(32)`, checked with `hmac.compare_digest` (constant-time) on every
   request. It arrives on Twirp RPCs for free as `Authorization: Bearer <token>` (this shim tells
   `actions/cache` its own `ACTIONS_RUNTIME_TOKEN` *is* this token), and is additionally embedded
-  as a `token=` query parameter on the `signed_upload_url` this shim hands back, because real
-  Azure block-blob semantics send no bearer header on the upload PUTs at all -- without that
-  query-param check, a wide bind would leave the upload endpoint genuinely unauthenticated.
+  as a `token=` query parameter on both the `signed_upload_url` AND `signed_download_url` this
+  shim hands back, because real Azure block-blob semantics send no bearer header on the upload
+  PUTs (and `actions/cache`'s own plain-GET download client sends no bearer header either) --
+  without that query-param check, a wide bind would leave both proxy endpoints genuinely
+  unauthenticated.
+- **This shim's own AWS credentials never reach the wrapped action.** The STS credentials from
+  `/api/v2/output/credentials` are used only inside this process, to sign the S3
+  `PutObject`/`GetObject` calls `/upload/<id>`'s commit and `/download/<id>` make -- they are never
+  written to a response body, a log line, or `$BASH_ENV`.
 - `/healthz` stays unauthenticated by design but returns nothing beyond a static
   `{"status":"ok"}`.
-- Neither the per-job request token nor the CircleCI task token from `/tmp/circleci-ts.sock` is
-  ever written to this process's own logs.
+- Neither the per-job request token, the CircleCI task token from `/tmp/circleci-ts.sock`, nor the
+  AWS STS credentials from `/api/v2/output/credentials` are ever written to this process's own
+  logs.
 
 ## OIDC token issuance for wrapped Actions
 
@@ -861,12 +872,6 @@ workflows:
 
 ## What does not work
 
-- **`actions/cache` save does not durably persist yet -- restore works, save's upload leg has a
-  real, reproduced gap in CircleCI's own backend.** See [Actions cache shim](#actions-cache-shim)
-  below for the full design, what's proven, and the exact evidence trail. This orb now ships a
-  real protocol-translation shim (`act/cache-shim`) rather than nothing, which is real progress
-  over the prior "not attempted" state, but a genuine cross-run cache **hit** is not yet
-  demonstrated -- be honest with yourself about that before relying on it.
 - **`actions/upload-artifact`/`download-artifact` now work for non-`container:`-scoped jobs** --
   see [Artifacts](#artifacts) below: Act already ships a complete artifact-v4 server, this orb
   just now exposes the one flag (`artifact-server-path`) that turns it on. `upload-artifact@v4`

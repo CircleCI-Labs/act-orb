@@ -845,6 +845,77 @@ jobs:
             echo "OK: dash-sanitized key exported correctly, and a shell-metacharacter value"
             echo "round-tripped exactly without executing -- printf '%q' quoting works as designed."
 
+  # Real drift check for the is_true() consolidation: install.sh, run-act.sh, cache-shim-start.sh,
+  # and oidc-shim-start.sh each embed a mechanically generated, byte-identical copy of
+  # src/scripts/lib/is_true.sh (a plain <<include(...)>> was tried first and reverted -- real
+  # orb-tools/pack rejects more than one include directive in a single YAML scalar, and each of
+  # these commands' `command:` field already has one for its own main script; see git history and
+  # lib/is_true.sh's own comment for the reproduced failure). This job regenerates all four from
+  # the canonical file and asserts the checked-in copies already match -- a hand-edit to any one
+  # copy that skipped the sync script fails this job loudly instead of drifting silently.
+  test_is_true_no_drift:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Regenerate all four embedded is_true() copies and assert nothing changed
+          command: |
+            set -euo pipefail
+            bash src/scripts/sync-embedded-is-true.sh
+            if ! git diff --exit-code -- src/scripts/install.sh src/scripts/run-act.sh src/scripts/cache-shim-start.sh src/scripts/oidc-shim-start.sh; then
+              echo "FAIL: regenerating is_true() from src/scripts/lib/is_true.sh changed one or more" >&2
+              echo "of the four embedded copies above -- one of them was hand-edited without also" >&2
+              echo "running 'bash src/scripts/sync-embedded-is-true.sh' (or lib/is_true.sh itself" >&2
+              echo "changed and the embedded copies weren't regenerated). Run that script and" >&2
+              echo "commit the result." >&2
+              exit 1
+            fi
+            echo "OK: all four embedded is_true() copies match src/scripts/lib/is_true.sh exactly."
+      - run:
+          name: Sanity check each of the four call sites still accepts both boolean encodings
+          command: |
+            set -euo pipefail
+            # A heredoc is deliberately avoided here (same reason as the
+            # boolean-encoding test job above): a heredoc's own open-marker
+            # characters, inside a YAML block-literal command string, get
+            # misread by CircleCI's own pipeline-parameter substitution
+            # scanner at config-compile time. printf avoids the problem
+            # entirely.
+            driver="$(mktemp)"
+            {
+              printf 'for v in 1 true TRUE True 0 false FALSE False anything-else; do\n'
+              printf '  if is_true "${v}"; then\n'
+              printf '    echo "${v}=true"\n'
+              printf '  else\n'
+              printf '    echo "${v}=false"\n'
+              printf '  fi\n'
+              printf 'done\n'
+            } > "${driver}"
+
+            for f in install.sh run-act.sh cache-shim-start.sh oidc-shim-start.sh; do
+              # Extract just the generated is_true() block and drive it directly and in isolation,
+              # so this checks the EXACT function text shipped in each file, independent of that
+              # file's other logic (which the more targeted per-script tests already cover).
+              extracted="$(mktemp)"
+              sed -n '/^# BEGIN GENERATED: is_true /,/^# END GENERATED: is_true$/p' "src/scripts/${f}" > "${extracted}"
+              if [ ! -s "${extracted}" ]; then
+                echo "FAIL: no 'BEGIN GENERATED: is_true' block found in src/scripts/${f}" >&2
+                exit 1
+              fi
+
+              out="$(bash -c "source ${extracted}; source ${driver}")"
+              echo "=== ${f} ==="
+              echo "${out}"
+              for v in 1 true TRUE True; do
+                echo "${out}" | grep -qx "${v}=true" || { echo "FAIL (${f}): '${v}' did not evaluate true" >&2; exit 1; }
+              done
+              for v in 0 false FALSE False anything-else; do
+                echo "${out}" | grep -qx "${v}=false" || { echo "FAIL (${f}): '${v}' did not evaluate false" >&2; exit 1; }
+              done
+            done
+            echo "OK: all four call sites' is_true() accept both '1/0' and 'true/false' encodings identically."
+
 workflows:
   test-deploy:
     jobs:
@@ -877,6 +948,9 @@ workflows:
           filters: *filters
       - test_collect_outputs_script:
           name: Testing collect-outputs.sh Directly
+          filters: *filters
+      - test_is_true_no_drift:
+          name: Testing is_true() Consolidation (no drift)
           filters: *filters
       # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
       # Test your orb's commands in a custom job and test your orb's jobs directly as a part of this workflow.
@@ -956,6 +1030,7 @@ workflows:
             - "Testing create-workflow-file.sh Directly"
             - "Testing create-env-var-secret-files.sh Directly"
             - "Testing collect-outputs.sh Directly"
+            - "Testing is_true() Consolidation (no drift)"
       - orb-tools/publish:
           name: "Publish Dev"
           orb_name: cci-labs/act
