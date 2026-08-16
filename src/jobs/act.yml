@@ -45,6 +45,15 @@ parameters:
     type: string
     default: ""
     description: A comma-separated list of variables treated as ${{ vars.VARIABLE }}
+  github-token:
+    type: env_var_name
+    default: GITHUB_TOKEN
+    description: >
+      Name of the CircleCI env var (project or context env var) holding the GitHub
+      token Act/the wrapped Action should see. Defaults to `GITHUB_TOKEN` -- the exact
+      same behavior as today. A seam only, for a future CircleCI-platform-minted,
+      scoped, short-lived token to be injected under a different env var name with no
+      interface change; see the README's "Security notes" for the full rationale.
   workflow-file:
     type: string
     default: /tmp/workflow.yml
@@ -52,11 +61,29 @@ parameters:
   uses:
     type: string
     default: ""
-    description: The GitHub Action to execute (e.g. actions/checkout@v2)
+    description: >
+      The GitHub Action to execute (e.g. actions/checkout@v2). Alias for `id` below -- exactly
+      one of the two must be set. `uses` wins if both are set.
+  id:
+    type: string
+    default: ""
+    description: >
+      Family-consistent alias for `uses`: the GitHub Action to execute (e.g.
+      actions/checkout@v2). Added for consistency with sibling ecosystem-bridge orbs, which use
+      `id`/`inputs` rather than GitHub's own `uses`/`with` vocabulary; `uses`/`with` remain the
+      primary names for this orb since they are the vocabulary its actual audience (GitHub
+      Actions users) already knows. `uses` wins if both are set.
   with:
     default: ""
     type: string
-    description: Key-value pairs for the `with` block
+    description: >
+      Key-value pairs for the `with` block. Alias for `inputs` below -- `with` wins if both are set.
+  inputs:
+    type: string
+    default: ""
+    description: >
+      Family-consistent alias for `with`: key-value pairs passed to the action's inputs. `with`
+      wins if both are set.
   env:
     type: string
     default: ""
@@ -77,6 +104,29 @@ parameters:
     type: string
     default: "ubuntu-latest"
     description: Image to run the job on (e.g. ubuntu-latest, windows-latest)
+  services:
+    type: string
+    default: ""
+    description: >
+      Verbatim YAML for the job's `services:` block, passed straight through to Act with no
+      translation (Act emulates it via its own Docker networking -- see the README's "What does
+      not work" section for known Act service-emulation issues this inherits). Ignored when
+      `skip-create-workflow-file` is set.
+  outputs:
+    type: string
+    default: ""
+    description: >
+      Comma-separated list of the action's output keys (matching its action.yml `outputs:`) to
+      surface into $BASH_ENV, verbatim by name, for later native CircleCI steps in this job to
+      read as plain shell variables. Empty (the default) means no outputs are collected -- zero
+      behavior change for existing callers. Requires `skip-create-workflow-file` to be unset
+      and `bind` to stay enabled (the default).
+  outputs-file:
+    type: string
+    default: .act-orb-outputs.env
+    description: >
+      Filename (relative to the checkout root) used to hand the action's outputs from inside
+      Act's container back to the CircleCI host. Only used when `outputs` is non-empty.
   platform:
     type: string
     default: ubuntu-latest=catthehacker/ubuntu:act-latest
@@ -92,7 +142,10 @@ parameters:
   bind:
     type: boolean
     default: true
-    description: Enables the bind flag which binds working directory to container, rather than copy
+    description: >
+      Enables the bind flag which binds working directory to container, rather than copy. NOTE:
+      Act's own CLI default for --bind is false; this orb defaults to true. See the README's
+      "Defaults that deviate from Act" section.
   verbose:
     type: boolean
     default: false
@@ -100,7 +153,10 @@ parameters:
   detect-event:
     type: boolean
     default: true
-    description: Automatically detects and uses the first event type in the workflow
+    description: >
+      Automatically detects and uses the first event type in the workflow. NOTE: Act's own CLI
+      default for --detect-event is false; this orb defaults to true. See the README's "Defaults
+      that deviate from Act" section.
   directory:
     type: string
     default: .
@@ -108,7 +164,10 @@ parameters:
   action-offline-mode:
     type: boolean
     default: true
-    description: Enable offline mode for actions (runs without fetching actions from remote sources)
+    description: >
+      Enable offline mode for actions (runs without fetching actions from remote sources). NOTE:
+      Act's own CLI default for --action-offline-mode is false; this orb defaults to true. See
+      the README's "Defaults that deviate from Act" section.
   cache-actions:
     type: boolean
     default: true
@@ -128,11 +187,17 @@ parameters:
   pull:
     type: boolean
     default: false
-    description: Forces pulling of Docker images even if already present
+    description: >
+      Forces pulling of Docker images even if already present. NOTE: Act's own CLI default for
+      --pull is true; this orb defaults to false. See the README's "Defaults that deviate from
+      Act" section.
   rebuild:
     type: boolean
     default: false
-    description: Rebuilds local Docker images even if already present
+    description: >
+      Rebuilds local Docker images even if already present. NOTE: Act's own CLI default for
+      --rebuild is true; this orb defaults to false. See the README's "Defaults that deviate
+      from Act" section.
   remote-name:
     type: string
     default: origin
@@ -140,7 +205,10 @@ parameters:
   reuse:
     type: boolean
     default: true
-    description: Prevents container removal after successful runs for maintaining state
+    description: >
+      Prevents container removal after successful runs for maintaining state. NOTE: Act's own
+      CLI default for --reuse is false; this orb defaults to true. See the README's "Defaults
+      that deviate from Act" section.
   input-file:
     type: string
     default: .input
@@ -149,6 +217,21 @@ parameters:
     type: string
     default: ""
     description: Additional flags to be passed to the `act` CLI
+  artifact-server-path:
+    type: string
+    default: ""
+    description: >
+      Directory Act's own built-in artifact server stores uploads to/serves downloads from.
+      Empty (the default) is a no-op -- see `run-act`'s own parameter description and the
+      README's "Artifacts" section for the full explanation.
+  artifact-server-addr:
+    type: string
+    default: ""
+    description: Address Act's artifact server binds. Only meaningful when `artifact-server-path` is set.
+  artifact-server-port:
+    type: string
+    default: ""
+    description: Port Act's artifact server listens on. Only meaningful when `artifact-server-path` is set.
   skip-install:
     type: boolean
     default: false
@@ -184,14 +267,20 @@ steps:
       secrets: << parameters.secrets >>
       var-file: << parameters.var-file >>
       variables: << parameters.variables >>
+      github-token: << parameters.github-token >>
       workflow-file: << parameters.workflow-file >>
       uses: << parameters.uses >>
+      id: << parameters.id >>
       with: << parameters.with >>
+      inputs: << parameters.inputs >>
       env: << parameters.env >>
       workflow-name: << parameters.workflow-name >>
       workflow-event: << parameters.workflow-event >>
       job-name: << parameters.job-name >>
       runs-on-image: << parameters.runs-on-image >>
+      services: << parameters.services >>
+      outputs: << parameters.outputs >>
+      outputs-file: << parameters.outputs-file >>
       platform: << parameters.platform >>
       event-file: << parameters.event-file >>
       actor: << parameters.actor >>
@@ -210,6 +299,9 @@ steps:
       reuse: << parameters.reuse >>
       input-file: << parameters.input-file >>
       additional-act-flags: << parameters.additional-act-flags >>
+      artifact-server-path: << parameters.artifact-server-path >>
+      artifact-server-addr: << parameters.artifact-server-addr >>
+      artifact-server-port: << parameters.artifact-server-port >>
       skip-install: << parameters.skip-install >>
       skip-create-env-var-secret-files: << parameters.skip-create-env-var-secret-files >>
       skip-create-workflow-file: << parameters.skip-create-workflow-file >>

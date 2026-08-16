@@ -7,11 +7,27 @@ parameters:
     description: Path to store the generated GitHub Actions-like workflow YAML file
   action:
     type: string
-    description: The GitHub Action to execute (e.g. actions/checkout@v2)
+    default: ""
+    description: The GitHub Action to execute (e.g. actions/checkout@v2). Alias for `id` below -- exactly one of the two must be set.
+  id:
+    type: string
+    default: ""
+    description: >
+      Family-consistent alias for `action`/`uses`: the GitHub Action to execute (e.g.
+      actions/checkout@v2). If both `action` and `id` are set, `action` wins. Added for
+      consistency with sibling ecosystem-bridge orbs, which use `id`/`inputs` rather than
+      GitHub's own `uses`/`with` vocabulary; `action`/`uses` remain the primary names for this
+      orb since they are the vocabulary its actual audience (GitHub Actions users) already knows.
   with:
     default: ""
     type: string
-    description: Key-value pairs for the `with` block
+    description: Key-value pairs for the `with` block. Alias for `inputs` below -- if both are set, `with` wins.
+  inputs:
+    type: string
+    default: ""
+    description: >
+      Family-consistent alias for `with`: key-value pairs passed to the action's inputs. If
+      both `with` and `inputs` are set, `with` wins.
   env:
     type: string
     default: ""
@@ -32,6 +48,35 @@ parameters:
     type: string
     default: "ubuntu-latest"
     description: Image to run the job on (e.g. ubuntu-latest, windows-latest)
+  services:
+    type: string
+    default: ""
+    description: >
+      Verbatim YAML for the job's `services:` block (indented as it would appear directly
+      under a GitHub Actions job, e.g. a line like `postgres:` followed by further-indented
+      `image:`/`env:`/`ports:` keys). Passed straight through to Act with no translation --
+      Act emulates `services:` itself via its own Docker networking, inheriting Act's own
+      known service-emulation issues (nektos/act#1022, nektos/act#2607). See the README's
+      "What does not work" section. Native translation to a CircleCI secondary Docker image
+      would avoid Act's emulation entirely but is a job-level (not command-level) design
+      change -- see docs/ROADMAP.md.
+  outputs:
+    type: string
+    default: ""
+    description: >
+      Comma-separated list of the action's output keys (matching its action.yml `outputs:`)
+      to capture. When non-empty, the generated workflow gets a stable `id:` on the action
+      step and a second, same-job step that writes each requested
+      `${{ steps.<id>.outputs.<key> }}` value to `outputs-file` for `collect-outputs` to pick
+      up afterwards. Empty (the default) generates the exact same workflow file this orb
+      always has -- zero behavior change for existing callers.
+  outputs-file:
+    type: string
+    default: .act-orb-outputs.env
+    description: >
+      Filename (relative to the job's checkout root, i.e. $GITHUB_WORKSPACE inside Act's
+      container) that the generated output-capture step writes to. Only used when `outputs`
+      is non-empty. Must match the `outputs-file` passed to `collect-outputs`.
 
 steps:
   - run:
@@ -39,10 +84,15 @@ steps:
       environment:
         ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
         ORB_VAL_ACTION: <<parameters.action>>
+        ORB_VAL_ACTION_ID: <<parameters.id>>
         ORB_VAL_WITH: <<parameters.with>>
+        ORB_VAL_INPUTS: <<parameters.inputs>>
         ORB_VAL_ENV: <<parameters.env>>
         ORB_VAL_WORKFLOW_NAME: <<parameters.workflow-name>>
         ORB_VAL_WORKFLOW_EVENT: <<parameters.workflow-event>>
         ORB_VAL_JOB_NAME: <<parameters.job-name>>
         ORB_VAL_RUNS_ON_IMAGE: <<parameters.runs-on-image>>
+        ORB_VAL_SERVICES: <<parameters.services>>
+        ORB_VAL_OUTPUTS: <<parameters.outputs>>
+        ORB_VAL_OUTPUTS_FILE: <<parameters.outputs-file>>
       command: <<include(scripts/create-workflow-file.sh)>>

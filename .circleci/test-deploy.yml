@@ -2,7 +2,7 @@ version: 2.1
 orbs:
   # Your orb will be automatically injected here during the pipeline.
   # Reference your orb's jobs and commands below as they will exist when built.
-  orb-tools: circleci/orb-tools@12.3.0
+  orb-tools: circleci/orb-tools@12.5.0
   # The orb definition is intentionally not included here. It will be injected into the pipeline.
   act: {}
 
@@ -35,14 +35,1062 @@ jobs:
             hello-world: "example-value"
           force-install: false
           debug: true
-  
+  # Regression coverage for the `outputs` feature (added for family parity):
+  # asserts the action's real `time` output (see its action.yml) actually
+  # lands in $BASH_ENV as a plain shell variable, not just that the job
+  # exits zero.
+  # Uses the `machine` executor (this orb's own documented default -- see
+  # src/executors/default.yml and the test_cache_shim job's own comment
+  # below), NOT docker+setup_remote_docker: setup_remote_docker gives you a
+  # REMOTE Docker daemon that cannot see this job container's own
+  # filesystem, so --bind (a volume mount, enabled by default) silently
+  # shares nothing, and the outputs handoff file Act writes inside its
+  # container never makes it back to this job's own working directory for
+  # `collect-outputs` to read. Confirmed live on job 1552: "Run Act" showed
+  # Act's own `::set-output:: time=...` firing successfully inside its
+  # container, but the very next step ("Collect Act's output(s) into
+  # $BASH_ENV") logged "No output handoff file found at
+  # ./.act-orb-outputs.env -- nothing to collect" -- i.e. the file that
+  # step needed was never shared back across the remote-daemon boundary.
+  # Switching to `machine` (a real local Docker daemon `--bind` can actually
+  # share with) is this same fix already proven for test_cache_shim et al.
+  test_output_capture:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - act/act:
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          outputs: "time"
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the action's output was captured into $BASH_ENV
+          command: |
+            if [ -z "${time:-}" ]; then
+              echo "Expected \$time to be set by act/act's 'outputs' capture, but it was empty/unset." >&2
+              exit 1
+            fi
+            echo "Captured action output: time=$time"
+  # Regression coverage for the stale-outputs guard: a second act/act call in
+  # the same job, with skip-create-workflow-file: true (so nothing
+  # regenerates or truncates the handoff file this call), must not leave a
+  # leftover handoff file from the first call's `outputs` capture sitting
+  # around for `collect-outputs` to silently re-read as if it were fresh.
+  # Same `machine`-vs-docker+setup_remote_docker reasoning as
+  # test_output_capture immediately above -- this job also relies on
+  # `outputs` capture (twice, in fact) across the --bind boundary.
+  test_stale_outputs_guard:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - act/act:
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          outputs: "time"
+          force-install: false
+          debug: true
+      - run:
+          name: Sanity check the first call's output capture landed
+          command: |
+            if [ -z "${time:-}" ]; then
+              echo "Expected \$time to be set by the first act/act call's 'outputs' capture, but it was empty/unset." >&2
+              exit 1
+            fi
+            echo "First call captured: time=$time"
+      - act/act:
+          workflow-file: .github/workflows/hello-world.yml
+          skip-create-workflow-file: true
+          outputs: "time"
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the first call's handoff file was not left over for a silent re-read
+          command: |
+            if [ -f .act-orb-outputs.env ]; then
+              echo "A stale .act-orb-outputs.env file from the first act/act call was still" >&2
+              echo "present after a second call with skip-create-workflow-file: true. The" >&2
+              echo "guard that removes it before Act runs did not fire." >&2
+              exit 1
+            fi
+            echo "No stale outputs handoff file present after the second call -- guard is working."
+  # Regression coverage for the family-consistent `id`/`inputs` aliases
+  # (added for family parity): exercises them as the *only* way the action
+  # is specified, rather than alongside `uses`/`with`.
+  test_id_inputs_aliases:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - setup_remote_docker
+      - act/act:
+          id: actions/hello-world-javascript-action@v1.1
+          inputs: |
+            who-to-greet: "Mona the Octocat"
+          force-install: false
+          debug: true
+  # Regression coverage for the `services` passthrough (added for family
+  # parity): verifies the generated workflow's `services:` block is valid
+  # YAML that Act actually accepts and runs against, end to end.
+  test_service_containers:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - setup_remote_docker
+      - act/act:
+          uses: actions/hello-world-javascript-action@v1.1
+          with: |
+            who-to-greet: "Mona the Octocat"
+          services: |
+            redis:
+              image: redis:7-alpine
+          force-install: false
+          debug: true
+  # Regression coverage for the new github-token seam: pointed at a
+  # differently-named env var, create-env-var-secret-files must alias that
+  # variable's VALUE into the secrets bucket under the literal key
+  # GITHUB_TOKEN, and must NOT leak the source variable's own name into the
+  # plaintext env file, even though it's not itself on the (deliberately
+  # emptied, for this test) `secrets` list.
+  test_github_token_seam:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - run:
+          name: Seed a differently-named token env var
+          command: echo 'export CCI_MINTED_GH_TOKEN=totally-a-seam-value' >> "$BASH_ENV"
+      - act/create-env-var-secret-files:
+          env-file: /tmp/seam-test.env
+          secret-file: /tmp/seam-test.secrets
+          var-file: /tmp/seam-test.vars
+          secrets: ""
+          github-token: CCI_MINTED_GH_TOKEN
+      - run:
+          name: Assert the seam aliased CCI_MINTED_GH_TOKEN into GITHUB_TOKEN
+          command: |
+            if ! grep -qx 'GITHUB_TOKEN=totally-a-seam-value' /tmp/seam-test.secrets; then
+              echo "Expected GITHUB_TOKEN=totally-a-seam-value in /tmp/seam-test.secrets" >&2
+              cat /tmp/seam-test.secrets >&2 || true
+              exit 1
+            fi
+            if grep -q '^CCI_MINTED_GH_TOKEN=' /tmp/seam-test.env 2>/dev/null; then
+              echo "CCI_MINTED_GH_TOKEN leaked into the plaintext env file" >&2
+              exit 1
+            fi
+            echo "OK: github-token seam aliased correctly and did not leak the source var"
+  # Integration coverage for the GitHub Actions workflow compiler (ghac):
+  # compiles a real multi-job, needs:-chained GitHub workflow fixture into a
+  # CircleCI config, then validates that config against the real CLI --
+  # proving the setup-workflow half of the feature (act/gha-compile) end to
+  # end, not just that ghac's own unit tests pass in isolation.
+  test_gha_compile:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/02-needs-chain.yml
+          out: /tmp/generated-config.yml
+      - run:
+          name: Install CircleCI CLI
+          command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
+      - run:
+          name: Validate the generated config against the real CLI
+          command: circleci config validate --config /tmp/generated-config.yml
+  # Integration coverage for the per-job half (act/gha-render-job + act/act's
+  # existing skip-create-workflow-file escape hatch): renders one job out of
+  # a fixture GitHub workflow and actually executes it with a real `act`,
+  # proving the runtime path a gha-compile-generated pipeline's own jobs
+  # would follow -- not just that the rendered file happens to validate.
+  test_gha_render_and_run:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - setup_remote_docker
+      - act/gha-render-job:
+          workflow-file: test/gha-compile-fixture/sample-workflow.yml
+          job: hello
+          out: /tmp/rendered-job.yml
+      - run:
+          name: Sanity check the rendered file before handing it to act
+          command: |
+            if [ ! -s /tmp/rendered-job.yml ]; then
+              echo "Expected a non-empty rendered job file at /tmp/rendered-job.yml" >&2
+              exit 1
+            fi
+            grep -q "run: echo" /tmp/rendered-job.yml
+      - act/act:
+          skip-create-workflow-file: true
+          workflow-file: /tmp/rendered-job.yml
+          job: hello
+          force-install: false
+          debug: true
+  # Integration coverage for strategy.matrix -> CircleCI matrix (added for
+  # family parity with buildkite-gha): compiles a 2x2 matrix fixture and
+  # asserts the generated config contains a real matrix: stanza, then
+  # validates it against the real CLI end to end -- proving the compiler
+  # output is actually acceptable CircleCI config, not just well-formed YAML.
+  #
+  # Also compiles+validates 12-matrix-exclude.yml (a two-key matrix with an
+  # exclude: entry) in the same job: this is the regression coverage for a
+  # real bug found in render.go's exclude: rendering (a two-or-more-key
+  # exclude entry rendered its second key one indentation depth too deep,
+  # which `circleci config validate` rejected but `ghac compile` itself did
+  # not -- exiting 0 with a broken config). 08-matrix-2x2.yml alone can't
+  # catch this: it has no exclude: at all. The Go-level unit tests
+  # (TestMatrixExcludeRenderText, internal/compile/compile_test.go) cover the
+  # same case without a real CLI; this step is what proves the fix against
+  # the actual CircleCI config parser, end to end, in CI.
+  test_gha_compile_matrix:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/08-matrix-2x2.yml
+          out: /tmp/generated-matrix-config.yml
+      - run:
+          name: "Sanity check the matrix: stanza is actually present"
+          command: |
+            grep -q "matrix:" /tmp/generated-matrix-config.yml
+            grep -q "parameters:" /tmp/generated-matrix-config.yml
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/12-matrix-exclude.yml
+          out: /tmp/generated-matrix-exclude-config.yml
+      - run:
+          name: "Sanity check the exclude: block is actually present"
+          command: |
+            grep -q "exclude:" /tmp/generated-matrix-exclude-config.yml
+      - run:
+          name: Install CircleCI CLI
+          command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
+      - run:
+          name: Validate the generated matrix config against the real CLI
+          command: circleci config validate --config /tmp/generated-matrix-config.yml
+      - run:
+          name: Validate the generated matrix+exclude config against the real CLI
+          command: circleci config validate --config /tmp/generated-matrix-exclude-config.yml
+  # Integration coverage for runs-on: self-hosted -> CircleCI self-hosted
+  # runner resource classes (added for family parity). Deliberately does NOT
+  # run `circleci config validate` here: the generated config's own
+  # `act/gha-render-job` step passes --self-hosted-namespace, a command
+  # parameter that only exists once THIS branch's own `Publish Dev` step
+  # (later in this same workflow) has republished cci-labs/act@dev:... --
+  # validating that against the registry here would be a same-run
+  # chicken-and-egg failure on the very first run after this parameter was
+  # added. Asserting the compiled resource_class/machine shape by grepping
+  # gha-compile's own output still proves the --self-hosted-namespace flag
+  # round-trips correctly through the orb command -> script -> ghac binary
+  # in a real CircleCI job.
+  test_gha_compile_self_hosted:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - act/gha-compile:
+          workflow-file: tools/ghac/fixtures/11-self-hosted-runner.yml
+          out: /tmp/generated-self-hosted-config.yml
+          self-hosted-namespace: acme
+      - run:
+          name: Sanity check the self-hosted resource_class/machine shape
+          command: |
+            grep -q "machine: true" /tmp/generated-self-hosted-config.yml
+            grep -q "resource_class: acme/linux-x64" /tmp/generated-self-hosted-config.yml
+
+  # Real integration coverage for the Actions-cache shim (added for family
+  # parity with buildkite-gha's own cache support). Runs the shim against
+  # the REAL, live CircleCI runner API in an actual job, drives an actual
+  # `actions/cache/save@v4` then `actions/cache/restore@v4` through act/act
+  # in the SAME job, and asserts the shim's own protocol translation AND the
+  # real, SigV4-signed S3 upload/download leg both actually succeeded (see
+  # cache_shim_server.py's module docstring for the full contract this now
+  # implements: GET .../output/config -> GET .../output/credentials -> a
+  # real S3 PutObject/GetObject). A same-job save+restore does not by itself
+  # prove a *durable, cross-process* hit (this job's own shim process could
+  # in principle short-circuit) -- that is what
+  # test_cache_shim_durable_hit_save/restore below exist to prove, as two
+  # separate jobs with two separate shim processes and two separate sets of
+  # STS credentials.
+  # Uses the `machine` executor (this orb's own documented default -- see
+  # src/executors/default.yml), NOT docker+setup_remote_docker, for a real,
+  # measured reason: setup_remote_docker gives you a REMOTE Docker daemon
+  # that cannot see this job container's own filesystem at all, so `--bind`
+  # (a volume mount) silently shares nothing. Confirmed live: caching even
+  # this repo's own already-committed LICENSE file failed with "No files
+  # were found with the provided path: LICENSE" under setup_remote_docker;
+  # switching to `machine` (a real local Docker daemon) fixed it immediately
+  # with no other change. This was confirmed to be the same root cause of the
+  # once pre-existing test_output_capture/test_stale_outputs_guard failures
+  # (both also relied on `--bind` under docker+setup_remote_docker) -- see
+  # those jobs' own comments above for the confirming log evidence; they were
+  # switched to `machine` too and now pass.
+  test_cache_shim:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - act/cache-shim
+      - act/act:
+          # checkout: false -- we already checked out once above.
+          checkout: false
+          uses: actions/cache/save@v4
+          with: |
+            path: LICENSE
+            key: cache-shim-test-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - act/act:
+          checkout: false
+          uses: actions/cache/restore@v4
+          with: |
+            path: LICENSE
+            key: cache-shim-test-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the shim's own negotiation AND the real S3 upload/download leg both succeeded
+          command: |
+            LOG=/tmp/.cache-shim/server.log
+            if [ ! -f "$LOG" ]; then
+              echo "Expected the cache shim's own server log at $LOG -- the shim never started." >&2
+              exit 1
+            fi
+            echo "=== cache-shim server log ==="
+            cat "$LOG"
+            echo "=============================="
+            if ! grep -q 'CreateCacheEntry HTTP/1.1" 200' "$LOG"; then
+              echo "Regression: the shim never served a successful CreateCacheEntry call --" >&2
+              echo "actions/cache/save@v4 never reached the shim, or auth/negotiation broke." >&2
+              exit 1
+            fi
+            echo "OK: shim served CreateCacheEntry successfully -- protocol negotiation works."
+            if grep -q 'commit failed' "$LOG"; then
+              echo "Regression: the real S3 PutObject failed -- see cache_shim_server.py's module" >&2
+              echo "docstring for the contract this is supposed to satisfy (config -> credentials" >&2
+              echo "-> signed PutObject). This used to be an expected, documented gap; it is not" >&2
+              echo "anymore -- see the README's cache-shim section." >&2
+              exit 1
+            fi
+            if ! grep -qE 'PUT /upload/.*" 201' "$LOG"; then
+              echo "Regression: expected a 201 upload-commit response (real S3 PutObject succeeded)." >&2
+              exit 1
+            fi
+            echo "OK: the real, SigV4-signed S3 PutObject succeeded."
+            if ! grep -qE 'GET /download/.*" 200' "$LOG"; then
+              echo "Regression: expected a 200 on the download proxy (real S3 GetObject succeeded)." >&2
+              exit 1
+            fi
+            echo "OK: the real, SigV4-signed S3 GetObject succeeded."
+            echo "This job proves the shim's protocol translation AND the real upload/download leg"
+            echo "both work end to end against the live CircleCI runner API and real S3, within a"
+            echo "single job. See test_cache_shim_durable_hit_save/restore for cross-job proof."
+
+  # THE acceptance bar for closing the cache shim's upload/download gap: a
+  # DURABLE, CROSS-JOB cache hit, not just a same-job save+restore (which
+  # test_cache_shim above already covers, and which alone can't rule out
+  # some same-process shortcut). This job only SAVES a cache -- built from a
+  # value unique to this pipeline run (pipeline.number), so a stale hit from
+  # a previous run's object can't be mistaken for a fresh one -- and stops.
+  # test_cache_shim_durable_hit_restore below is a SEPARATE job (its own
+  # machine, its own act/cache-shim process, its own STS credentials fetched
+  # fresh from GET .../output/credentials) that `requires:` this one in the
+  # workflow below, so it only starts after this job's save has actually
+  # completed, then restores that exact key and diffs the bytes. The only
+  # way that restore job can produce a byte-identical file is a real round
+  # trip through CircleCI's runner API + S3 -- there is no shared local
+  # state between the two jobs' containers.
+  test_cache_shim_durable_hit_save:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - act/cache-shim
+      - act/act:
+          checkout: false
+          uses: actions/cache/save@v4
+          with: |
+            path: LICENSE
+            key: cache-shim-durable-hit-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the save leg's real S3 upload actually committed (not just negotiated)
+          command: |
+            LOG=/tmp/.cache-shim/server.log
+            echo "=== cache-shim server log ==="
+            cat "$LOG" 2>/dev/null || echo "(no log found)"
+            echo "=============================="
+            if ! grep -qE 'PUT /upload/.*" 201' "$LOG"; then
+              echo "FAIL: the real S3 PutObject for this durable-hit save did not commit (no 201" >&2
+              echo "on /upload/<id>) -- see cache_shim_server.py's module docstring for the" >&2
+              echo "upload contract this is supposed to satisfy." >&2
+              exit 1
+            fi
+            echo "OK: save committed via a real, SigV4-signed S3 PutObject."
+
+  # See test_cache_shim_durable_hit_save's own comment above -- this is the
+  # other half of the durable-hit proof. A fresh machine, a fresh
+  # act/cache-shim process, fresh STS credentials: the ONLY way LICENSE can
+  # come back byte-identical is a real S3 GetObject retrieving what the
+  # OTHER job's OTHER process uploaded.
+  test_cache_shim_durable_hit_restore:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - run:
+          name: Save the expected content, then delete the file so a restore is the only way it comes back
+          command: |
+            cp LICENSE /tmp/expected-license
+            rm -f LICENSE
+      - act/cache-shim
+      - act/act:
+          checkout: false
+          uses: actions/cache/restore@v4
+          with: |
+            path: LICENSE
+            key: cache-shim-durable-hit-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - run:
+          name: Assert LICENSE came back with the exact original bytes -- the real durable-hit proof
+          command: |
+            LOG=/tmp/.cache-shim/server.log
+            echo "=== cache-shim server log ==="
+            cat "$LOG" 2>/dev/null || echo "(no log found)"
+            echo "=============================="
+            if [ ! -f LICENSE ]; then
+              echo "FAIL: LICENSE was not restored at all -- no durable cache hit. actions/cache" >&2
+              echo "treats a restore miss as non-fatal (build proceeds cold), which is why this" >&2
+              echo "step has to check explicitly rather than relying on act/act's own exit code." >&2
+              exit 1
+            fi
+            if ! grep -qE 'GET /download/.*" 200' "$LOG"; then
+              echo "FAIL: LICENSE exists but the shim's own log shows no successful download proxy" >&2
+              echo "GET -- unexpected; investigate before trusting this as a real hit." >&2
+              exit 1
+            fi
+            if ! diff -q /tmp/expected-license LICENSE > /dev/null; then
+              echo "FAIL: restored LICENSE does not match the original bytes -- corruption somewhere" >&2
+              echo "in the save/upload/download/restore round trip." >&2
+              diff /tmp/expected-license LICENSE >&2 || true
+              exit 1
+            fi
+            echo "OK: DURABLE CROSS-JOB CACHE HIT PROVEN. LICENSE was saved by a completely"
+            echo "separate job (separate machine, separate shim process, separate STS"
+            echo "credentials), and this job restored the exact original bytes via a real,"
+            echo "signed S3 GetObject -- not a same-process shortcut, not a coincidence."
+
+  # Real integration coverage for enabling Act's OWN built-in artifact
+  # server (`--artifact-server-path`) -- added for family parity, and much
+  # smaller than a from-scratch artifact shim would have been: Act already
+  # implements the real artifact-v4 protocol end to end (pkg/artifacts),
+  # this orb just never passed the one flag that turns it on. Runs a real
+  # `actions/upload-artifact@v4` through act/act and asserts the uploaded
+  # file actually lands on the CircleCI host's disk at the configured path,
+  # then hands it to a native `store_artifacts` step.
+  # `machine`, not docker+setup_remote_docker -- see the test_cache_shim
+  # job's own comment above for why (remote Docker cannot see this
+  # container's filesystem, so --bind shares nothing).
+  test_artifacts:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - act/act:
+          checkout: false
+          uses: actions/upload-artifact@v4
+          with: |
+            name: cache-shim-test-artifact
+            path: LICENSE
+          artifact-server-path: /tmp/act-artifacts
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the uploaded artifact actually landed on the CircleCI host's disk
+          command: |
+            if [ ! -d /tmp/act-artifacts ]; then
+              echo "Expected /tmp/act-artifacts to exist -- Act's own --artifact-server-path was not honored." >&2
+              exit 1
+            fi
+            echo "=== /tmp/act-artifacts contents ==="
+            find /tmp/act-artifacts -type f
+            if ! find /tmp/act-artifacts -type f | grep -q .; then
+              echo "Expected at least one uploaded file under /tmp/act-artifacts" >&2
+              exit 1
+            fi
+            echo "OK: actions/upload-artifact@v4's file is really on disk via Act's own artifact server."
+      - store_artifacts:
+          path: /tmp/act-artifacts
+          destination: gha-artifacts
+
+  # Regression coverage for boolean-parameter encoding (added for family
+  # parity -- see harness-orb's test_run_plugin_booleans, the audit item
+  # this mirrors). run-act.sh's is_true() is the ONLY thing standing between
+  # six real orb parameters (pull, rebuild, reuse, bind, detect-event,
+  # action-offline-mode) and Act getting the opposite of what the user
+  # asked for -- and this exact bug class (published orbs render a boolean
+  # parameter as "1"/"0", inline callers render "true"/"false") has already
+  # shipped once in this orb family. Drives run-act.sh directly with a fake
+  # `act` binary on PATH that just logs its own argv, so both encodings are
+  # asserted against the REAL script, not a reimplementation of its logic.
+  test_run_act_booleans:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: "Regression test - pull/rebuild/reuse/bind/detect-event/action-offline-mode booleans reach act's own argv"
+          command: |
+            set -euo pipefail
+            fakebin="$(mktemp -d)"
+            call_log="$(mktemp)"
+            # A bash heredoc is deliberately avoided here. CircleCI's own pipeline/parameter
+            # substitution scans each YAML string value for its two-character open marker
+            # followed, anywhere later in that same value, by its two-character close marker
+            # -- a heredoc's open marker plus an unrelated append-redirect later in its own
+            # body forms exactly that shape and gets misread as a malformed substitution,
+            # erroring at config-compile time with "Expected valid identifier." (reproduced
+            # live on a real pipeline). printf avoids the problem entirely -- same style as
+            # harness-orb's own test_run_plugin_booleans, which this test otherwise mirrors.
+            printf '#!/bin/bash\necho "$@" >> "${ACT_CALL_LOG}"\n' > "${fakebin}/act"
+            chmod +x "${fakebin}/act"
+
+            # run-act.sh requires the workflow file to actually exist (a real,
+            # separate check unrelated to booleans) -- give it an empty one.
+            # Every OTHER *-file parameter is deliberately left pointed at a
+            # nonexistent path: run-act.sh only warns and skips the matching
+            # --*-file flag for those, which is irrelevant to this test.
+            wf="$(mktemp)"
+            missing="$(mktemp -u)"
+
+            run_case() {
+              : > "${call_log}"
+              PATH="${fakebin}:${PATH}" \
+                ACT_CALL_LOG="${call_log}" \
+                ORB_VAL_WORKFLOW_FILE="${wf}" \
+                ORB_VAL_PLATFORM="ubuntu-latest=catthehacker/ubuntu:act-latest" \
+                ORB_VAL_ENV_FILE="${missing}.env" \
+                ORB_VAL_SECRET_FILE="${missing}.secrets" \
+                ORB_VAL_INPUT_FILE="${missing}.input" \
+                ORB_VAL_VAR_FILE="${missing}.vars" \
+                ORB_VAL_EVENT_FILE="${missing}.event" \
+                ORB_VAL_ACTOR="nektos/act" \
+                ORB_VAL_VERBOSE="false" \
+                ORB_VAL_DIRECTORY="." \
+                ORB_VAL_DEFAULT_BRANCH="main" \
+                ORB_VAL_JOB="" \
+                ORB_VAL_REMOTE_NAME="origin" \
+                ORB_VAL_ADDITIONAL_ACT_FLAGS="" \
+                ORB_VAL_ARTIFACT_SERVER_PATH="" \
+                ORB_VAL_ARTIFACT_SERVER_ADDR="" \
+                ORB_VAL_ARTIFACT_SERVER_PORT="" \
+                ORB_VAL_OUTPUTS="" \
+                ORB_VAL_OUTPUTS_FILE=".act-orb-outputs.env" \
+                ORB_VAL_PULL="$1" \
+                ORB_VAL_REBUILD="$2" \
+                ORB_VAL_REUSE="$3" \
+                ORB_VAL_BIND="$4" \
+                ORB_VAL_DETECT_EVENT="$5" \
+                ORB_VAL_ACTION_OFFLINE_MODE="$6" \
+                bash src/scripts/run-act.sh > /dev/null
+            }
+
+            assert_all_true() {
+              local encoding="$1"
+              if grep -q -- '--pull=false' "${call_log}"; then
+                echo "FAIL (${encoding}): pull=true still added --pull=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              if grep -q -- '--rebuild=false' "${call_log}"; then
+                echo "FAIL (${encoding}): rebuild=true still added --rebuild=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              for flag in '--reuse' '--bind' '--detect-event' '--action-offline-mode'; do
+                if ! grep -q -- "${flag}" "${call_log}"; then
+                  echo "FAIL (${encoding}): true did not add ${flag} - got:" >&2
+                  cat "${call_log}" >&2; exit 1
+                fi
+              done
+              echo "OK (${encoding}): all six true-booleans took effect."
+            }
+
+            assert_all_false() {
+              local encoding="$1"
+              if ! grep -q -- '--pull=false' "${call_log}"; then
+                echo "FAIL (${encoding}): pull=false did not add --pull=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              if ! grep -q -- '--rebuild=false' "${call_log}"; then
+                echo "FAIL (${encoding}): rebuild=false did not add --rebuild=false - got:" >&2
+                cat "${call_log}" >&2; exit 1
+              fi
+              for flag in '--reuse' '--bind' '--detect-event' '--action-offline-mode'; do
+                if grep -q -- "${flag}" "${call_log}"; then
+                  echo "FAIL (${encoding}): false still added ${flag} - got:" >&2
+                  cat "${call_log}" >&2; exit 1
+                fi
+              done
+              echo "OK (${encoding}): all six false-booleans correctly did nothing."
+            }
+
+            # Published-orb encoding: booleans render as "1"/"0".
+            run_case "1" "1" "1" "1" "1" "1"
+            assert_all_true "1/0 encoding, all true"
+            run_case "0" "0" "0" "0" "0" "0"
+            assert_all_false "1/0 encoding, all false"
+
+            # Inline-job encoding: booleans render as "true"/"false".
+            run_case "true" "true" "true" "true" "true" "true"
+            assert_all_true "true/false encoding, all true"
+            run_case "false" "false" "false" "false" "false" "false"
+            assert_all_false "true/false encoding, all false"
+
+            echo "All boolean-encoding regression cases passed."
+
+  # Hostile-input coverage gap-closer for run-act.sh's `additional-act-flags`: the README's own
+  # command reference (`| additional-act-flags | string | "" | Extra flags passed verbatim to the
+  # act CLI (word-split, unlike every other parameter here). |`) flags this as the one run-act.sh
+  # parameter that gets real shell word-splitting rather than passing through as a single argv
+  # element -- the same category of "untrusted data reaching a shell" the with/env/services notes
+  # cover for create-workflow-file.sh, just word-splitting instead of YAML embedding. Drives
+  # run-act.sh directly with a fake `act` binary that logs each argv element on its own line (so
+  # word-splitting is visible), and pins two things: (1) a value containing `$(...)`/backtick
+  # command-substitution syntax is never executed -- bash's word-splitting on an already-expanded
+  # variable does NOT re-parse or evaluate embedded command-substitution syntax, only the literal
+  # source text `$(...)`/`` `...` `` does, so this is expected to be safe, but it is exactly the
+  # kind of assumption that deserves a real regression test, not just a comment; (2) embedded
+  # quote characters in the value are themselves treated as literal characters PART OF a
+  # whitespace-delimited word, not as grouping -- `"quoted value with spaces"` splits into four
+  # separate argv elements (`"quoted`, `value`, `with`, `spaces"`), not one. This does NOT fix
+  # anything -- it pins the CURRENT, documented word-splitting behavior so a future change is a
+  # deliberate, visible decision instead of a silent one that leaves the README's own claim stale.
+  test_run_act_additional_flags_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: "Hostile input - additional-act-flags word-splits, but never executes embedded command substitution"
+          command: |
+            set -euo pipefail
+            fakebin="$(mktemp -d)"
+            call_log="$(mktemp)"
+            pwn_subshell="$(mktemp -u)"
+            pwn_backtick="$(mktemp -u)"
+            # printf avoids the same heredoc/pipeline-parameter-substitution pitfall the
+            # boolean-encoding test job above documents -- one arg per line makes word-splitting
+            # visible in the log.
+            {
+              printf '#!/bin/bash\n'
+              printf 'for a in "$@"; do printf "%%s\\n" "$a" >> "${ACT_CALL_LOG}"; done\n'
+            } > "${fakebin}/act"
+            chmod +x "${fakebin}/act"
+
+            wf="$(mktemp)"
+            missing="$(mktemp -u)"
+            hostile="--container-architecture linux/amd64 \$(touch ${pwn_subshell}) \`touch ${pwn_backtick}\` \"quoted value with spaces\""
+
+            PATH="${fakebin}:${PATH}" \
+              ACT_CALL_LOG="${call_log}" \
+              ORB_VAL_WORKFLOW_FILE="${wf}" \
+              ORB_VAL_PLATFORM="ubuntu-latest=catthehacker/ubuntu:act-latest" \
+              ORB_VAL_ENV_FILE="${missing}.env" \
+              ORB_VAL_SECRET_FILE="${missing}.secrets" \
+              ORB_VAL_INPUT_FILE="${missing}.input" \
+              ORB_VAL_VAR_FILE="${missing}.vars" \
+              ORB_VAL_EVENT_FILE="${missing}.event" \
+              ORB_VAL_ACTOR="nektos/act" \
+              ORB_VAL_VERBOSE="false" \
+              ORB_VAL_DIRECTORY="." \
+              ORB_VAL_DEFAULT_BRANCH="main" \
+              ORB_VAL_JOB="" \
+              ORB_VAL_REMOTE_NAME="origin" \
+              ORB_VAL_ADDITIONAL_ACT_FLAGS="${hostile}" \
+              ORB_VAL_ARTIFACT_SERVER_PATH="" \
+              ORB_VAL_ARTIFACT_SERVER_ADDR="" \
+              ORB_VAL_ARTIFACT_SERVER_PORT="" \
+              ORB_VAL_OUTPUTS="" \
+              ORB_VAL_OUTPUTS_FILE=".act-orb-outputs.env" \
+              ORB_VAL_PULL="true" \
+              ORB_VAL_REBUILD="true" \
+              ORB_VAL_REUSE="false" \
+              ORB_VAL_BIND="true" \
+              ORB_VAL_DETECT_EVENT="false" \
+              ORB_VAL_ACTION_OFFLINE_MODE="false" \
+              bash src/scripts/run-act.sh > /dev/null
+
+            echo "=== logged argv (one element per line) ==="
+            cat "${call_log}"
+            echo "==========================================="
+
+            if [ -e "${pwn_subshell}" ] || [ -e "${pwn_backtick}" ]; then
+              echo "FAIL: embedded command substitution in additional-act-flags actually executed" >&2
+              exit 1
+            fi
+            echo "OK: no command substitution executed -- word-splitting never re-evaluates the value."
+
+            grep -qxF -- '$(touch' "${call_log}" || { echo "FAIL: expected the literal, unexecuted token '\$(touch' as its own argv element" >&2; exit 1; }
+            grep -qxF -- "${pwn_subshell})" "${call_log}" || { echo "FAIL: expected the literal token '${pwn_subshell})' as its own argv element" >&2; exit 1; }
+            grep -qxF -- '`touch' "${call_log}" || { echo "FAIL: expected the literal, unexecuted token '\`touch' as its own argv element" >&2; exit 1; }
+            grep -qxF -- '"quoted' "${call_log}" || { echo "FAIL: expected embedded quote chars to stay literal (word-splitting doesn't strip them) -- '\"quoted' as its own element" >&2; exit 1; }
+            grep -qxF -- 'spaces"' "${call_log}" || { echo "FAIL: expected 'spaces\"' as its own element -- the quoted phrase should be FOUR separate argv elements, not one" >&2; exit 1; }
+            echo "OK: word-splitting behaves exactly as documented -- plain whitespace splitting,"
+            echo "no quote-grouping, no command-substitution re-evaluation."
+
+  # Direct script-level tests (added for family parity -- the four vendor orbs all invoke their
+  # own scripts directly with ORB_VAL_* env vars and assert on exact error text for hostile
+  # input; act-orb had zero direct script tests before this job, every script was only exercised
+  # indirectly through a full act/act dispatch). Covers create-workflow-file.sh's own hostile
+  # input (neither action/uses nor id set) plus an injection-regression case for each of
+  # `with`/`env`/`services` -- the exact three parameters the README's own Security notes flag
+  # as "trusted, unescaped input." This does NOT fix that -- it pins the CURRENT, documented
+  # behavior (verbatim, unescaped passthrough) so a future change to escaping is a deliberate,
+  # visible decision instead of a silent one that leaves the README's own claim stale.
+  test_create_workflow_file_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Hostile input - neither action/uses nor id set is rejected with the exact error
+          command: |
+            set -eu
+            wf="$(mktemp)"
+            set +e
+            error_output="$(ORB_VAL_WORKFLOW_FILE="${wf}" ORB_VAL_ACTION="" ORB_VAL_ACTION_ID="" \
+              ORB_VAL_WITH="" ORB_VAL_INPUTS="" ORB_VAL_ENV="" ORB_VAL_WORKFLOW_NAME=circleci \
+              ORB_VAL_WORKFLOW_EVENT=push ORB_VAL_JOB_NAME=action ORB_VAL_RUNS_ON_IMAGE=ubuntu-latest \
+              ORB_VAL_SERVICES="" ORB_VAL_OUTPUTS="" ORB_VAL_OUTPUTS_FILE=.act-orb-outputs.env \
+              bash src/scripts/create-workflow-file.sh 2>&1)"
+            actual_exit=$?
+            set -e
+            if [ "${actual_exit}" -eq 0 ]; then
+              echo "FAIL: expected create-workflow-file.sh to reject when neither action/uses nor id is set, but it exited 0" >&2
+              exit 1
+            fi
+            case "${error_output}" in
+              *"one of the 'action'/'uses' or 'id' parameters is required but neither was set"*) ;;
+              *)
+                echo "FAIL: expected that exact error text, got:" >&2
+                echo "${error_output}" >&2
+                exit 1
+                ;;
+            esac
+            echo "OK: missing action/uses/id is rejected with the exact, documented error."
+      - run:
+          name: "Injection regression - with/env/services pass through verbatim, unescaped"
+          command: |
+            set -euo pipefail
+            wf="$(mktemp)"
+            ORB_VAL_WORKFLOW_FILE="${wf}" \
+              ORB_VAL_ACTION="actions/hello-world-javascript-action@v1.1" \
+              ORB_VAL_ACTION_ID="" \
+              ORB_VAL_WITH=$'legit-key: legit-value\ninjected-key: "attacker value with a colon: and a dash - here"' \
+              ORB_VAL_INPUTS="" \
+              ORB_VAL_ENV=$'plain: env-value\nENV_INJECTED: "another: colon - dash"' \
+              ORB_VAL_WORKFLOW_NAME=circleci ORB_VAL_WORKFLOW_EVENT=push ORB_VAL_JOB_NAME=action \
+              ORB_VAL_RUNS_ON_IMAGE=ubuntu-latest \
+              ORB_VAL_SERVICES=$'evil-service:\n  image: attacker/whatever:latest' \
+              ORB_VAL_OUTPUTS="" ORB_VAL_OUTPUTS_FILE=.act-orb-outputs.env \
+              bash src/scripts/create-workflow-file.sh
+
+            echo "=== generated workflow ==="
+            cat "${wf}"
+            echo "=================="
+
+            assert_line() {
+              if ! grep -qxF "$1" "${wf}"; then
+                echo "FAIL: expected this EXACT, unescaped line in the generated workflow:" >&2
+                echo "  $1" >&2
+                echo "This is a regression check for the README's own documented 'trusted," >&2
+                echo "unescaped input' security posture -- if this now fails because the line" >&2
+                echo "came through escaped/quoted/rejected instead, that is a real, deliberate" >&2
+                echo "behavior change that the README's Security notes section must be updated" >&2
+                echo "to match, not a bug in this test." >&2
+                exit 1
+              fi
+            }
+            assert_line '          injected-key: "attacker value with a colon: and a dash - here"'
+            assert_line '          ENV_INJECTED: "another: colon - dash"'
+            assert_line '        image: attacker/whatever:latest'
+            echo "OK: with/env/services all passed through verbatim and unescaped, exactly as documented."
+
+  # Gap-closing test: create-env-var-secret-files.sh had no dedicated direct test -- only
+  # exercised indirectly via act/act. Covers the secrets-vs-variables priority conflict, and pins
+  # the README's own documented risk (Security notes: "still written unquoted... may not
+  # round-trip an embedded newline correctly") as a real, reproduced regression check: an
+  # ordinary (non-secret) env var whose VALUE contains an embedded newline forges an extra,
+  # unrelated KEY=VALUE line into the plaintext .env file Act reads from.
+  test_create_env_var_secret_files_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Secrets-vs-variables conflict, and an injection regression via an embedded newline
+          command: |
+            set -euo pipefail
+            env_file="$(mktemp)"; secret_file="$(mktemp)"; var_file="$(mktemp)"
+            rm -f "${env_file}" "${secret_file}" "${var_file}"
+
+            export CCI_TEST_SECRET="topsecret"
+            export CCI_TEST_VAR="varvalue"
+            export CCI_TEST_CONFLICT="should-be-secret-not-var"
+            # Hostile input: an ordinary env var whose value embeds a newline followed by
+            # something that looks like its own KEY=VALUE line.
+            export CCI_TEST_INJECT=$'line-one\nCCI_INJECTED=evil'
+
+            ORB_VAL_ENV_FILE="${env_file}" ORB_VAL_SECRET_FILE="${secret_file}" ORB_VAL_VAR_FILE="${var_file}" \
+              ORB_VAL_SECRETS="CCI_TEST_SECRET,CCI_TEST_CONFLICT" \
+              ORB_VAL_VARIABLES="CCI_TEST_VAR,CCI_TEST_CONFLICT" \
+              ORB_VAL_GITHUB_TOKEN="" \
+              bash src/scripts/create-env-var-secret-files.sh
+
+            echo "=== secret file ==="; cat "${secret_file}"
+            echo "=== var file ==="; cat "${var_file}"
+            echo "=== env file ==="; cat "${env_file}"
+
+            if ! grep -qx "CCI_TEST_CONFLICT=should-be-secret-not-var" "${secret_file}"; then
+              echo "FAIL: a key named in both secrets and variables should land in the SECRET file" >&2
+              exit 1
+            fi
+            if grep -q "^CCI_TEST_CONFLICT=" "${var_file}"; then
+              echo "FAIL: CCI_TEST_CONFLICT leaked into the var file as well as the secret file" >&2
+              exit 1
+            fi
+            echo "OK: secrets-vs-variables conflict resolves to secret, as documented."
+
+            if ! grep -qx "CCI_TEST_INJECT=line-one" "${env_file}"; then
+              echo "FAIL: expected the first line of the multi-line value in the plaintext env file" >&2
+              exit 1
+            fi
+            if ! grep -qx "CCI_INJECTED=evil" "${env_file}"; then
+              echo "FAIL (regression): expected the embedded-newline continuation line to appear as" >&2
+              echo "its own forged 'CCI_INJECTED=evil' line -- this is the CURRENT, documented risk" >&2
+              echo "(README Security notes: values are written unquoted). If this now fails because" >&2
+              echo "the value round-trips safely instead, that is a real improvement the README's" >&2
+              echo "own warning should be updated to reflect, not a bug in this test." >&2
+              exit 1
+            fi
+            echo "OK (documented risk, pinned as a regression check, not fixed here): an embedded"
+            echo "newline in an ordinary env var's value forges an extra, unrelated line in the"
+            echo "plaintext .env file, exactly as the README's Security notes already warn."
+
+  # Gap-closing test: collect-outputs.sh had no dedicated direct test either. Covers the
+  # documented safe-no-op-on-missing-file path, the dash-sanitization warning path, AND --
+  # deliberately contrasting with create-env-var-secret-files.sh's own documented risk above --
+  # proves collect-outputs.sh's printf '%q' quoting genuinely neutralizes shell metacharacters
+  # (command substitution, backticks, quotes) in an action's own output VALUE rather than
+  # re-interpreting them when $BASH_ENV is later sourced.
+  test_collect_outputs_script:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Missing handoff file is a safe no-op (exit 0, no error)
+          command: |
+            set -euo pipefail
+            dir="$(mktemp -d)"
+            export BASH_ENV="$(mktemp)"
+            ORB_VAL_DIRECTORY="${dir}" ORB_VAL_OUTPUTS_FILE=".missing.env" ORB_VAL_OUTPUTS="time" \
+              bash src/scripts/collect-outputs.sh
+            echo "OK: a missing handoff file exits 0 with no error, as documented."
+      - run:
+          name: "Hostile output key (dash) and a shell-metacharacter value are both handled safely"
+          command: |
+            set -euo pipefail
+            dir="$(mktemp -d)"
+            handoff="${dir}/.act-orb-outputs.env"
+            # LT+LT (not a literal doubled less-than in this file's own source) builds the
+            # actions/core-style key-plus-delimiter marker at runtime -- see the boolean-test
+            # job above for why a literal doubled marker character is avoided in config source.
+            LT='<'
+            {
+              printf '%s%s%s%s\n' "my-output" "${LT}" "${LT}" "DELIM1"
+              printf "%s\n" "safe-value"
+              printf "%s\n" "DELIM1"
+              printf '%s%s%s%s\n' "evil" "${LT}" "${LT}" "DELIM2"
+              printf '%s\n' '$(touch /tmp/pwned-subshell) `touch /tmp/pwned-backtick` "quoted"'
+              printf "%s\n" "DELIM2"
+            } > "${handoff}"
+
+            export BASH_ENV="$(mktemp)"
+            : > "${BASH_ENV}"
+            OUT="$(ORB_VAL_DIRECTORY="${dir}" ORB_VAL_OUTPUTS_FILE=".act-orb-outputs.env" \
+              ORB_VAL_OUTPUTS="my-output,evil" bash src/scripts/collect-outputs.sh 2>&1)"
+            echo "${OUT}"
+
+            case "${OUT}" in
+              *"is not a valid shell variable name; exporting as 'my_output' instead"*) ;;
+              *)
+                echo "FAIL: expected the dash-sanitization warning for 'my-output'" >&2
+                exit 1
+                ;;
+            esac
+
+            # shellcheck disable=SC1090
+            ( source "${BASH_ENV}"
+              if [ "${my_output:-}" != "safe-value" ]; then
+                echo "FAIL: expected my_output=safe-value after sourcing \$BASH_ENV, got '${my_output:-}'" >&2
+                exit 1
+              fi
+              if [ "${evil:-}" != '$(touch /tmp/pwned-subshell) `touch /tmp/pwned-backtick` "quoted"' ]; then
+                echo "FAIL: expected the metacharacter value to round-trip EXACTLY, got '${evil:-}'" >&2
+                exit 1
+              fi
+            )
+            if [ -e /tmp/pwned-subshell ] || [ -e /tmp/pwned-backtick ]; then
+              echo "FAIL: shell metacharacters in an output VALUE actually executed when \$BASH_ENV was sourced" >&2
+              exit 1
+            fi
+            echo "OK: dash-sanitized key exported correctly, and a shell-metacharacter value"
+            echo "round-tripped exactly without executing -- printf '%q' quoting works as designed."
+
+  # Real drift check for the is_true() consolidation: install.sh, run-act.sh, cache-shim-start.sh,
+  # and oidc-shim-start.sh each embed a mechanically generated, byte-identical copy of
+  # src/scripts/lib/is_true.sh (a plain <<include(...)>> was tried first and reverted -- real
+  # orb-tools/pack rejects more than one include directive in a single YAML scalar, and each of
+  # these commands' `command:` field already has one for its own main script; see git history and
+  # lib/is_true.sh's own comment for the reproduced failure). This job regenerates all four from
+  # the canonical file and asserts the checked-in copies already match -- a hand-edit to any one
+  # copy that skipped the sync script fails this job loudly instead of drifting silently.
+  test_is_true_no_drift:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Regenerate all four embedded is_true() copies and assert nothing changed
+          command: |
+            set -euo pipefail
+            bash src/scripts/sync-embedded-is-true.sh
+            if ! git diff --exit-code -- src/scripts/install.sh src/scripts/run-act.sh src/scripts/cache-shim-start.sh src/scripts/oidc-shim-start.sh; then
+              echo "FAIL: regenerating is_true() from src/scripts/lib/is_true.sh changed one or more" >&2
+              echo "of the four embedded copies above -- one of them was hand-edited without also" >&2
+              echo "running 'bash src/scripts/sync-embedded-is-true.sh' (or lib/is_true.sh itself" >&2
+              echo "changed and the embedded copies weren't regenerated). Run that script and" >&2
+              echo "commit the result." >&2
+              exit 1
+            fi
+            echo "OK: all four embedded is_true() copies match src/scripts/lib/is_true.sh exactly."
+      - run:
+          name: Sanity check each of the four call sites still accepts both boolean encodings
+          command: |
+            set -euo pipefail
+            # A heredoc is deliberately avoided here (same reason as the
+            # boolean-encoding test job above): a heredoc's own open-marker
+            # characters, inside a YAML block-literal command string, get
+            # misread by CircleCI's own pipeline-parameter substitution
+            # scanner at config-compile time. printf avoids the problem
+            # entirely.
+            driver="$(mktemp)"
+            {
+              printf 'for v in 1 true TRUE True 0 false FALSE False anything-else; do\n'
+              printf '  if is_true "${v}"; then\n'
+              printf '    echo "${v}=true"\n'
+              printf '  else\n'
+              printf '    echo "${v}=false"\n'
+              printf '  fi\n'
+              printf 'done\n'
+            } > "${driver}"
+
+            for f in install.sh run-act.sh cache-shim-start.sh oidc-shim-start.sh; do
+              # Extract just the generated is_true() block and drive it directly and in isolation,
+              # so this checks the EXACT function text shipped in each file, independent of that
+              # file's other logic (which the more targeted per-script tests already cover).
+              extracted="$(mktemp)"
+              sed -n '/^# BEGIN GENERATED: is_true /,/^# END GENERATED: is_true$/p' "src/scripts/${f}" > "${extracted}"
+              if [ ! -s "${extracted}" ]; then
+                echo "FAIL: no 'BEGIN GENERATED: is_true' block found in src/scripts/${f}" >&2
+                exit 1
+              fi
+
+              out="$(bash -c "source ${extracted}; source ${driver}")"
+              echo "=== ${f} ==="
+              echo "${out}"
+              for v in 1 true TRUE True; do
+                echo "${out}" | grep -qx "${v}=true" || { echo "FAIL (${f}): '${v}' did not evaluate true" >&2; exit 1; }
+              done
+              for v in 0 false FALSE False anything-else; do
+                echo "${out}" | grep -qx "${v}=false" || { echo "FAIL (${f}): '${v}' did not evaluate false" >&2; exit 1; }
+              done
+            done
+            echo "OK: all four call sites' is_true() accept both '1/0' and 'true/false' encodings identically."
+
 workflows:
   test-deploy:
     jobs:
+      - test_cache_shim:
+          name: Testing Actions Cache Shim
+          filters: *filters
+      - test_cache_shim_durable_hit_save:
+          name: Testing Cache Shim Durable Hit (save)
+          filters: *filters
+      - test_cache_shim_durable_hit_restore:
+          name: Testing Cache Shim Durable Hit (restore)
+          # Must run strictly AFTER the save job -- this is the whole point:
+          # a separate job, separate machine, separate shim process, that
+          # can only produce a byte-identical file via a real round trip
+          # through CircleCI's runner API and S3.
+          requires:
+            - Testing Cache Shim Durable Hit (save)
+          filters: *filters
+      - test_artifacts:
+          name: Testing Artifacts (Act's built-in server)
+          filters: *filters
+      - test_run_act_booleans:
+          name: Testing Boolean Parameter Encoding
+          filters: *filters
+      - test_run_act_additional_flags_script:
+          name: Testing run-act.sh additional-act-flags Directly
+          filters: *filters
+      - test_create_workflow_file_script:
+          name: Testing create-workflow-file.sh Directly
+          filters: *filters
+      - test_create_env_var_secret_files_script:
+          name: Testing create-env-var-secret-files.sh Directly
+          filters: *filters
+      - test_collect_outputs_script:
+          name: Testing collect-outputs.sh Directly
+          filters: *filters
+      - test_is_true_no_drift:
+          name: Testing is_true() Consolidation (no drift)
+          filters: *filters
       # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
       # Test your orb's commands in a custom job and test your orb's jobs directly as a part of this workflow.
       - run_on_remote_docker:
           name: Testing Remote Docker
+          filters: *filters
+      - test_output_capture:
+          name: Testing Output Capture
+          filters: *filters
+      - test_stale_outputs_guard:
+          name: Testing Stale Outputs Guard
+          filters: *filters
+      - test_id_inputs_aliases:
+          name: Testing id/inputs Aliases
+          filters: *filters
+      - test_service_containers:
+          name: Testing Service Containers
+          filters: *filters
+      - test_github_token_seam:
+          name: Testing github-token Seam
+          filters: *filters
+      - test_gha_compile:
+          name: Testing GHA Workflow Compiler (compile)
+          filters: *filters
+      - test_gha_render_and_run:
+          name: Testing GHA Workflow Compiler (render + run)
+          filters: *filters
+      - test_gha_compile_matrix:
+          name: Testing GHA Workflow Compiler (matrix)
+          filters: *filters
+      - test_gha_compile_self_hosted:
+          name: Testing GHA Workflow Compiler (self-hosted runner)
           filters: *filters
       - act/act:
           name: Testing Overriding Executor
@@ -54,7 +1102,7 @@ workflows:
           executor:
             name: act/default
             image: android:2024.11.1
-            resource_class: medium 
+            resource_class: medium
             docker_layer_caching: true
           force-install: true
           debug: true
@@ -71,8 +1119,27 @@ workflows:
           filters: *filters
           requires:
             - "Testing Remote Docker"
+            - "Testing Output Capture"
+            - "Testing Stale Outputs Guard"
+            - "Testing id/inputs Aliases"
+            - "Testing Service Containers"
+            - "Testing github-token Seam"
             - "Testing Overriding Executor"
             - "Testing Running Workflow File"
+            - "Testing Actions Cache Shim"
+            - "Testing Cache Shim Durable Hit (save)"
+            - "Testing Cache Shim Durable Hit (restore)"
+            - "Testing Artifacts (Act's built-in server)"
+            - "Testing GHA Workflow Compiler (compile)"
+            - "Testing GHA Workflow Compiler (render + run)"
+            - "Testing GHA Workflow Compiler (matrix)"
+            - "Testing GHA Workflow Compiler (self-hosted runner)"
+            - "Testing Boolean Parameter Encoding"
+            - "Testing run-act.sh additional-act-flags Directly"
+            - "Testing create-workflow-file.sh Directly"
+            - "Testing create-env-var-secret-files.sh Directly"
+            - "Testing collect-outputs.sh Directly"
+            - "Testing is_true() Consolidation (no drift)"
       - orb-tools/publish:
           name: "Publish Dev"
           orb_name: cci-labs/act

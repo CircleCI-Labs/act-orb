@@ -1,0 +1,12 @@
+name: single-job
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make build
+      - name: Test
+        run: make test

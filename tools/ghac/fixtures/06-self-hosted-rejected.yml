@@ -1,0 +1,16 @@
+# Bare/linux self-hosted runs-on is supported now (see 11-self-hosted-runner
+# .yml) -- this fixture instead exercises a self-hosted label set this
+# compiler genuinely can't resolve: act needs a Linux Docker host to run job
+# steps no matter which machine the CircleCI self-hosted runner itself is,
+# so a Windows self-hosted target is refused the same way windows-latest is
+# for GitHub-hosted runners, not silently attempted.
+name: self-hosted-windows-rejected
+on: [push]
+
+jobs:
+  build:
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make build

@@ -1,0 +1,89 @@
+description: >
+  Starts a local Actions-cache shim so a GitHub Action running under `act/act`/`act/run-act`
+  that calls `actions/cache@v4` (or any `setup-*` action with built-in caching) talks to a real
+  server instead of Act's own ephemeral, local-disk-only cache -- see the README's "Actions
+  cache shim" section for the full protocol translation, and its own "Known, real gap" note
+  before assuming a save actually persists. Run this command as a step *before* `act/act`/
+  `act/run-act` in the same job; it composes with them automatically by exporting
+  `ACTIONS_CACHE_SERVICE_V2`/`ACTIONS_RESULTS_URL`/`ACTIONS_RUNTIME_TOKEN` for the rest of the
+  job, the same seam `act/oidc-shim` already uses for its own env vars. Deliberately does NOT
+  set `GITHUB_SERVER_URL` -- see `cache-shim-start.sh`'s own comments for why doing so broke
+  Act's own action-fetching in real testing, and why it isn't needed anyway.
+
+parameters:
+  enabled:
+    type: boolean
+    default: true
+    description: >
+      Kill switch. When false, this command does nothing at all (no server, no exported env
+      vars) -- lets you toggle the shim via a pipeline parameter without removing the step.
+  port:
+    type: integer
+    default: 8991
+    description: >
+      TCP port the shim listens on inside this job. Change it only if 8991 collides with
+      something else already running in the same job (e.g. `act/oidc-shim`'s own 8990 default).
+  bind-host:
+    type: string
+    default: "0.0.0.0"
+    description: >
+      Socket bind address. Deliberately NOT loopback-only by default -- see the README's
+      "Security notes": when the wrapped action runs inside Act's own spawned container (the
+      normal case), that container is a sibling of whatever process started this shim, in its
+      own network namespace, so a loopback-only bind would be unreachable from it. Because the
+      bind can't be narrowed to loopback, the real auth boundary is the per-job request token
+      this command generates (checked constant-time on every request), not network position.
+  advertise-host:
+    type: string
+    default: "auto"
+    description: >
+      Address written into `ACTIONS_RESULTS_URL` for the action's process to connect to.
+      "auto" (the default) detects it the same way `act/oidc-shim` does: the Docker bridge
+      gateway if this job can see a local Docker daemon, else this job's own container's bridge
+      IP under `setup_remote_docker`, else a last-resort host IP with a loud warning. Set this
+      explicitly if auto-detection is wrong for your executor/networking setup.
+  task-socket:
+    type: string
+    default: "/tmp/circleci-ts.sock"
+    description: >
+      Path to CircleCI's own task-token unix socket, read once at this shim's own startup to
+      obtain the bearer token and `runner_host` it uses to call CircleCI's cache-save/
+      cache-restore API. Present on CircleCI's own docker/machine executor images; self-hosted
+      runners or future CircleCI changes may not have it -- this command fails loudly, with a
+      clear message, rather than starting unauthenticated against nothing if it's missing.
+  startup-timeout:
+    type: integer
+    default: 10
+    description: >
+      Maximum seconds to wait for the shim to report healthy before failing this step (so a
+      later step can never race an `actions/cache` call against a shim that never started).
+  runner-timeout:
+    type: integer
+    default: 30
+    description: >
+      Maximum seconds the shim will wait for one call to CircleCI's own cache-save/cache-restore
+      API before giving up on that one request. `actions/cache` itself treats a save/restore
+      failure as non-fatal (a warning, not a build failure), so a timeout here fails the same
+      safe way.
+  state-dir:
+    type: string
+    default: "/tmp/.cache-shim"
+    description: Directory this command uses for the generated server script, its log, and its pidfile.
+  step-name:
+    type: string
+    default: Start Actions cache shim
+    description: Allows customizing the name of the step that starts the shim.
+
+steps:
+  - run:
+      name: << parameters.step-name >>
+      environment:
+        ORB_VAL_ENABLED: << parameters.enabled >>
+        ORB_VAL_PORT: << parameters.port >>
+        ORB_VAL_BIND_HOST: << parameters.bind-host >>
+        ORB_VAL_ADVERTISE_HOST: << parameters.advertise-host >>
+        ORB_VAL_TASK_SOCKET: << parameters.task-socket >>
+        ORB_VAL_STARTUP_TIMEOUT: << parameters.startup-timeout >>
+        ORB_VAL_RUNNER_TIMEOUT: << parameters.runner-timeout >>
+        ORB_VAL_STATE_DIR: << parameters.state-dir >>
+      command: <<include(scripts/cache-shim-start.sh)>>

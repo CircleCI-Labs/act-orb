@@ -1,0 +1,17 @@
+# strategy.matrix itself is supported now (see 08/09/10) -- this fixture
+# instead exercises the one matrix shape that's still rejected by name:
+# runs-on driven by a matrix expression. The compiler requires a fixed
+# runs-on label even when strategy.matrix is used elsewhere in the job.
+name: matrix-runs-on-rejected
+on: [push]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: npm test

@@ -14,12 +14,7 @@ usage:
     main:
       jobs:
         - act/act:
-            uses: aquasecurity/trivy-action@master
+            uses: actions/setup-node@v4
             with: |
-              scan-type: fs
-              ignore-unfixed: true
-              format: sarif
-              output: report.sarif
-              scanners: vuln,secret,misconfig,license
-            platform: ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest
-            context: act
+              node-version: "20"
+            platform: ubuntu-latest=ghcr.io/catthehacker/ubuntu:full-latest

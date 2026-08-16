@@ -1,0 +1,32 @@
+description: |
+  Capture the wrapped GitHub Action's own outputs and surface them into $BASH_ENV so a later,
+  native CircleCI step in the same job can read them as plain shell variables -- verbatim by
+  name, the same convention the sibling ecosystem-bridge orbs (Bitrise, Harness, Bitbucket
+  Pipes, Buildkite) use for their own `collect-outputs`.
+
+  List the output keys you want (matching the names in the action's own action.yml `outputs:`)
+  in the `outputs` parameter. This is opt-in and defaults to off: existing jobs that don't set
+  `outputs` see no behavior change at all.
+
+usage:
+  version: 2.1
+  orbs:
+    act: circleci/act@x.y.z
+  jobs:
+    greet_and_read_output:
+      docker:
+        - image: cimg/base:current
+      steps:
+        - setup_remote_docker
+        - act/act:
+            uses: actions/hello-world-javascript-action@v1.1
+            with: |
+              who-to-greet: "Mona the Octocat"
+            outputs: "time"
+        - run:
+            name: Use the action's output natively
+            command: echo "The action greeted Mona at $time"
+  workflows:
+    main:
+      jobs:
+        - greet_and_read_output

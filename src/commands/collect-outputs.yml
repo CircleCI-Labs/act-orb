@@ -1,0 +1,33 @@
+description: >
+  Read the outputs the wrapped GitHub Action set (via steps.*.outputs, captured into a
+  handoff file by the generated workflow -- see create-workflow-file) and export them,
+  verbatim by key name, into $BASH_ENV so subsequent native CircleCI steps in the same job
+  can read them as plain shell variables. Mirrors the sibling ecosystem-bridge orbs'
+  `collect-outputs` command. Safe to call even if no outputs were produced: a missing or
+  empty handoff file is a silent no-op, not an error.
+
+parameters:
+  outputs:
+    type: string
+    default: ""
+    description: >
+      Comma-separated list of output keys that were requested (informational only -- used
+      for a clearer log message; every key actually found in the handoff file is exported
+      regardless of this list).
+  outputs-file:
+    type: string
+    default: .act-orb-outputs.env
+    description: Filename (relative to `directory`) written by the generated workflow's output-capture step.
+  directory:
+    type: string
+    default: .
+    description: Working directory Act was run against -- must match the `directory` passed to `run-act`.
+
+steps:
+  - run:
+      name: Collect Act's output(s) into $BASH_ENV
+      environment:
+        ORB_VAL_OUTPUTS: <<parameters.outputs>>
+        ORB_VAL_OUTPUTS_FILE: <<parameters.outputs-file>>
+        ORB_VAL_DIRECTORY: <<parameters.directory>>
+      command: <<include(scripts/collect-outputs.sh)>>

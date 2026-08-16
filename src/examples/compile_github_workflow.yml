@@ -1,0 +1,32 @@
+description: |
+  Compile a real `.github/workflows/ci.yml` into a CircleCI config and
+  continue the pipeline into it, using the `ghac` compiler (`act/gha-compile`)
+  and CircleCI's own `continuation` orb. This is the `.circleci/config.yml` a
+  user commits to opt a repo into "run my GitHub Actions workflow on
+  CircleCI" mode -- it is a `setup: true` config; every job it generates is
+  expected to use `act/gha-render-job` + `act/act` (see
+  render_and_run_github_job.yml for that half). See the main README's
+  "GitHub Actions workflow compiler" section for what's supported and what
+  is explicitly rejected by name rather than silently ignored.
+
+usage:
+  version: 2.1
+  setup: true
+  orbs:
+    act: circleci/act@x.y.z
+    continuation: circleci/continuation@1.0.0
+  jobs:
+    compile-github-workflow:
+      docker:
+        - image: cimg/base:current
+      steps:
+        - checkout
+        - act/gha-compile:
+            workflow-file: .github/workflows/ci.yml
+            out: /tmp/generated-config.yml
+        - continuation/continue:
+            configuration_path: /tmp/generated-config.yml
+  workflows:
+    setup:
+      jobs:
+        - compile-github-workflow

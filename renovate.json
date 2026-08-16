@@ -1,0 +1,89 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Adopts the same deliberate Renovate config already committed byte-for-byte to the",
+    "other four 'ecosystem bridge' orbs (bitrise, harness, bitbucket-pipes, buildkite) --",
+    "cci-labs/act was excluded from that earlier rollout only because it was mid-flight on",
+    "this own upgrade branch; this file brings it into line now that the branch is landing.",
+    "Every non-default setting below carries its own \"description\" explaining why it",
+    "departs from config:recommended. Two things this config will NEVER do, by design:",
+    "(1) touch git tags, and (2) auto-merge anything -- this orb is consumed by customers,",
+    "and its own release-filters (tag regex /^v[0-9]+\\.[0-9]+\\.[0-9]+$/) gates a real",
+    "production orb publish (orb-tools/publish, pub_type: production). Renovate only ever",
+    "opens branches/PRs against a normal base branch and has no mechanism to push a tag on",
+    "its own, so this risk is structural, not just configured away -- but automerge is",
+    "disabled twice below (automerge + platformAutomerge) as defense in depth anyway.",
+    "Pinning vs. ranging: CircleCI orb references (namespace/orb@X.Y.Z) have no range syntax",
+    "at all -- every reference is already a single exact version, enforced by the platform.",
+    "Since this orb is itself published for customers to depend on, treating our own",
+    "upstream pins (circleci/orb-tools, circleci/shellcheck) the same way -- one reviewed,",
+    "revertible commit per bump -- gives a clean paper trail from 'a production publish went",
+    "bad' back to 'this exact tooling bump'. We deliberately do NOT move any orb reference to",
+    "CircleCI's '@volatile' pseudo-version (always-latest, unpinned) even though Renovate",
+    "knows how to skip volatile orbs -- volatile would remove exactly the paper trail pinning",
+    "gives us. The same logic extends to Docker: every image already pinned to a real tag",
+    "(mvdan/shfmt, redis, android) stays pinned to a real tag and Renovate bumps it like any",
+    "other dependency. The only images left unmanaged are CircleCI's own floating 'current'",
+    "convenience tags (cimg/base:current in every job's docker executor; ubuntu-2404:current",
+    "as the default executor's machine image) -- those are intentionally a moving target",
+    "maintained upstream, with no 'newer current' for Renovate to bump to.",
+    "Verified against Renovate's own docs before writing this: the circleci manager scans",
+    "any file matching /(^|/)\\.circleci/.+\\.ya?ml$/ and extracts both 'orb' and 'docker'",
+    "datasource references from it -- so both .circleci/config.yml and",
+    ".circleci/test-deploy.yml are covered with zero extra config. It does NOT reach into",
+    "src/**/*.yml (orb source: executors, commands, jobs, examples) -- those either use a",
+    "parameterised <<parameters.image>> (nothing concrete to bump, e.g. src/executors/",
+    "default.yml's ubuntu-2404:current default) or are illustrative example snippets",
+    "(src/examples/*.yml) documenting usage, never executed by this repo's own CI. We",
+    "deliberately did not bolt on a custom regex manager to reach into README.md/src/",
+    "examples/*.yml: those pins are meant to look like a plausible customer config, not",
+    "track upstream, and Renovate silently rewriting a docs example would be a worse outcome",
+    "than leaving it alone."
+  ],
+  "extends": ["config:recommended"],
+  "labels": ["chore", "renovate"],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "platformAutomerge": false,
+  "semanticCommits": "disabled",
+  "baseBranchPatterns": ["main"],
+  "schedule": ["before 4am on Monday"],
+  "prConcurrentLimit": 3,
+  "circleci": {
+    "enabled": true
+  },
+  "vulnerabilityAlerts": {
+    "description": "Security-driven bumps should never sit in the queue for a weekly window -- let vulnerability-alert PRs raise immediately, on top of (not instead of) the normal weekly schedule everything else uses.",
+    "schedule": ["at any time"],
+    "labels": ["chore", "renovate", "security"]
+  },
+  "packageRules": [
+    {
+      "description": "Group this orb family's own CircleCI orb-tools/shellcheck version bumps into one PR, rather than one PR per orb -- an orb-tools bump changes the same lint/pack/review/continue pipeline every one of these repos shares, so reviewing them together (and running the one shared CI matrix once) is more useful than reviewing them apart.",
+      "matchManagers": ["circleci"],
+      "matchDatasources": ["orb"],
+      "matchPackageNames": ["circleci/orb-tools", "circleci/shellcheck"],
+      "groupName": "circleci orb-tools/shellcheck"
+    },
+    {
+      "description": "Group every OTHER Docker image actually pinned to a real, resolvable tag -- .circleci/config.yml's shfmt-check image (mvdan/shfmt), and .circleci/test-deploy.yml's pinned test-fixture images (redis, android) -- into one PR per digest/tag-bump cycle instead of a flood of one-image-at-a-time PRs. These are all test/tooling images with zero customer-facing blast radius, so grouping for review convenience costs nothing.",
+      "matchManagers": ["circleci", "dockerfile"],
+      "matchDatasources": ["docker"],
+      "groupName": "docker image tag/digest updates (test + tooling images)"
+    },
+    {
+      "description": "Do NOT try to bump CircleCI's own floating 'current' convenience tags (cimg/base:current in check-cli-version and every test-deploy docker job; ubuntu-2404:current as the machine-executor default). 'current' is maintained and moved forward by CircleCI itself, on purpose, as the whole point of using it instead of a dated tag -- there is no 'newer current' for Renovate to open a PR for, and treating it as a version to pin would fight the reason these jobs use 'current' in the first place.",
+      "matchManagers": ["circleci"],
+      "matchDatasources": ["docker"],
+      "matchCurrentValue": "/^current$/",
+      "enabled": false
+    },
+    {
+      "description": "Do NOT try to resolve or bump ':local' image tags -- carried over from the shared config for consistency even though this repo has none today (no image here is built ad hoc inside a test job and left unpushed). Kept so a future test fixture that does introduce one doesn't generate lookup-failure noise on the Dependency Dashboard.",
+      "matchManagers": ["circleci"],
+      "matchDatasources": ["docker"],
+      "matchCurrentValue": "/^local$/",
+      "enabled": false
+    }
+  ]
+}

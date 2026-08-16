@@ -9,6 +9,6 @@ parameters:
 steps:
   - save_cache:
       name: Saving cache for Act's Actions...
-      key: << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ .Environment.CIRCLE_PROJECT_ID }}--{{ .Environment.CIRCLE_JOB }}
+      key: << parameters.cache-key-prefix >>-act-cache-actions-{{ arch }}-{{ .Environment.CIRCLE_PROJECT_ID }}-{{ .Environment.CIRCLE_JOB }}
       paths:
         - ~/.cache/act
