@@ -39,10 +39,10 @@ Verified directly against `actions/toolkit`'s real source (`packages/cache/src/c
 Each RPC is translated into a call against CircleCI's own `$runner_host/api/v2/output/cache-save`
 / `cache-restore`, authenticated with the per-job task token read once, at this shim's own
 startup, from `/tmp/circleci-ts.sock` (a plain, no-HTTP-framing unix socket that just writes
-`{"token":...,"runner_host":...}` on connect and closes -- discovered live, confirmed against
-`CircleCITestOrg/docker-agent-tester`'s own minimal Go reader for the same socket). Absence of
-that socket is a fatal, clearly-messaged startup error, not a silent no-op -- self-hosted runners
-or future CircleCI changes may not have it.
+`{"token":...,"runner_host":...}` on connect and closes -- discovered live, confirmed against a
+CircleCI-internal reference reader for the same socket). Absence of that socket is a fatal,
+clearly-messaged startup error, not a silent no-op -- self-hosted runners or future CircleCI
+changes may not have it.
 
 ## The real upload/download contract, and how the old "known gap" was closed
 
@@ -53,17 +53,14 @@ without the `.tar.zst` suffix, with the path prefixed under `/api/v2/output/`,
 `/api/v2/storage/`, `/api/v2/task/storage/` -- all 404). The 404s were real; the diagnosis was
 wrong. `location` was never a route on `runner_host` at all.
 
-Read directly from CircleCI's own `circleci/output` (the server behind `runner.circleci.com`) and
-`circleci/task-agent-subcommand-cache` (a real, independent production consumer of the identical
-API, used today for Bazel/Gradle/Xcode-CAS/Turborepo caching) source, then confirmed live against
-this shim's own CI job:
+Derived from CircleCI's own runner-side output/cache-storage API (the service behind
+`runner.circleci.com`, also used internally by other CircleCI remote-caching integrations), then
+confirmed live against this shim's own CI job:
 
-- `GET {runner_host}/api/v2/output/config` (bearer = task token) returns, on real CircleCI SaaS:
-  ```json
-  {"type":"s3","endpoint":"","region":"us-east-1","bucket":"circleci-tasks-prod", ...}
-  ```
-  `type` is always `"s3"` on SaaS (a `"pre-signed"` mode exists in the server's own code but is
-  documented there as enterprise-only).
+- `GET {runner_host}/api/v2/output/config` (bearer = task token) returns, on real CircleCI SaaS,
+  a small JSON document naming the object-storage backend for this task -- bucket, region, and a
+  `type` field that is always `"s3"` on SaaS (a `"pre-signed"` mode exists in the server's own code
+  but is documented there as enterprise-only).
 - `GET {runner_host}/api/v2/output/credentials?provider=s3` (same bearer) returns short-lived
   (~15 minutes, observed live) per-task AWS STS credentials, scoped by IAM policy to this task's
   own storage prefixes only:

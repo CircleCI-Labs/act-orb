@@ -36,13 +36,13 @@ posture `act/oidc-shim` was fixed to have after its own security review. See the
   channel belongs to CircleCI's own runner-agent process, not something a job step can reach.
 
 **Why this wasn't fully closed this pass:** the mission that produced this shim was told
-`circleci/task-agent-subcommand-cache` already does this successfully for Bazel/Gradle/Turborepo
-caching -- but that repo's source was not reachable from the sandbox this work was done in.
-Reading it is very likely the fastest path to the actual answer (the correct way to redeem a
-`cache-save` ticket, or the actual endpoint/channel real cache bytes move through) -- faster than
-more trial-and-error probing against production.
+CircleCI's own internal caching-client tooling already does this successfully for other
+build-caching integrations -- but that tooling's source was not reachable from the sandbox this
+work was done in. Reading it is very likely the fastest path to the actual answer (the correct way
+to redeem a `cache-save` ticket, or the actual endpoint/channel real cache bytes move through) --
+faster than more trial-and-error probing against production.
 
-**If someone picks this up:** read `task-agent-subcommand-cache`'s own upload-redemption code
+**If someone picks this up:** read CircleCI's own internal caching-client's upload-redemption code
 first. If it truly uses `/api/v2/output/cache-save` the same way this shim does, the missing piece
 is almost certainly either (a) a header/field this pass didn't try, or (b) evidence the real
 channel is not public HTTP at all, in which case the honest scope of this shim is "restore-only,
@@ -247,23 +247,23 @@ under the literal key `GITHUB_TOKEN` (and keeps the source variable's own name o
 `.env` file), so Act and the wrapped Action still see a plain `GITHUB_TOKEN` with zero interface
 change on either side.
 
-**Why the seam exists, not just "because someone might want it":** CircleCI's Sources of Change
-team already mints scoped GitHub App installation tokens tied to pipeline-trigger time --
-`TokenRestrictions{Scopes, RepositoryIDs}` passed into `CreateAndStoreTokenForPipeline` in
-`soc-integrations`. That is materially closer to real GitHub Actions' own per-job `GITHUB_TOKEN`
-behavior (auto-scoped, tied to a specific trigger) than the static personal-access-token workaround
-this orb's README already documents as a "weaker substitute, not a drop-in one." The only piece
-that mechanism doesn't yet do is expose one of those minted tokens into a CircleCI job's
-environment under some env var name a config author can reference.
+**Why the seam exists, not just "because someone might want it":** part of CircleCI's own platform
+tooling already mints scoped GitHub App installation tokens tied to pipeline-trigger time. That is
+materially closer to real GitHub Actions' own per-job `GITHUB_TOKEN` behavior (auto-scoped, tied
+to a specific trigger) than the static personal-access-token workaround this orb's README already
+documents as a "weaker substitute, not a drop-in one." The only piece that mechanism doesn't yet do
+is expose one of those minted tokens into a CircleCI job's environment under some env var name a
+config author can reference.
 
-**What was deliberately NOT built in this pass:** any minting logic, any call into
-`soc-integrations`, any new CircleCI platform feature. This orb has no way to originate a
-pipeline-scoped token itself, and building that is a platform-level project, not an orb change.
-This pass only adds the *consumption* side of that future integration -- the aliasing seam -- so
-that whenever (if ever) a minted token becomes available as a job env var by some other mechanism,
-pointing `github-token` at its name is the entire integration step required on this orb's side.
+**What was deliberately NOT built in this pass:** any minting logic, any call into CircleCI's
+internal token-minting service, any new CircleCI platform feature. This orb has no way to
+originate a pipeline-scoped token itself, and building that is a platform-level project, not an
+orb change. This pass only adds the *consumption* side of that future integration -- the aliasing
+seam -- so that whenever (if ever) a minted token becomes available as a job env var by some other
+mechanism, pointing `github-token` at its name is the entire integration step required on this
+orb's side.
 
-**If someone picks this up:** the actual work is on the platform side (exposing a
-`CreateAndStoreTokenForPipeline`-minted token into a job's environment, and deciding the trust
-boundary/scoping UX for who can request one for a given pipeline) -- not here. Once that exists,
-this orb needs no further change; `github-token` already does its half of the job.
+**If someone picks this up:** the actual work is on the platform side (exposing a platform-minted
+token into a job's environment, and deciding the trust boundary/scoping UX for who can request one
+for a given pipeline) -- not here. Once that exists, this orb needs no further change;
+`github-token` already does its half of the job.

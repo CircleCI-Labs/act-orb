@@ -44,40 +44,29 @@ src/cache.ts, cacheTwirpClient.ts, uploadUtils.ts) -- not guessed:
     this server can, in principle, hand back CircleCI's own presigned GET
     URL directly and step out of the way.
 
-The real upload/download contract -- how the gap below was actually closed
-----------------------------------------------------------------------------
-An earlier version of this shim tried the obvious reading of the
-`cache-save` ticket -- POST the archive bytes straight to
-`$runner_host/<location>` -- and every construction 404'd, repeatedly,
-across many real pipeline runs (see git history / the README's cache-shim
-section for that full reproduced trail). The 404s were real, but the
-diagnosis was wrong: `location` was never a route on `runner_host` at all.
-
-Read directly from CircleCI's own `circleci/output` and
-`circleci/task-agent-subcommand-cache` server/client source (the same
-production code that backs Bazel/Gradle/Xcode-CAS/Turborepo remote caching
-today), confirmed live against this shim's own CI job:
-  - `GET {runner_host}/api/v2/output/config` (bearer = task token) returns
-    `{"type":"s3","endpoint":"","region":"us-east-1","bucket":"circleci-
-    tasks-prod",...}` on CircleCI's SaaS -- always `type=="s3"`; a
-    `"pre-signed"` mode exists in the server's own code but is documented
-    there as enterprise-only, never seen on SaaS.
+The real upload/download contract
+----------------------------------
+An earlier version of this shim mis-read the `cache-save` ticket's
+`location` field as a URL fragment to POST against on `runner_host`
+itself -- that route doesn't exist, so every attempt 404'd. The actual
+contract, confirmed live against this shim's own CI job:
+  - `GET {runner_host}/api/v2/output/config` (bearer = task token) reports
+    the object-storage backend to use for this task. On CircleCI's SaaS
+    this is always S3-compatible object storage (a "pre-signed" mode also
+    exists but is enterprise-only).
   - `GET {runner_host}/api/v2/output/credentials?provider=s3` (same bearer)
-    returns `{"s3":{"AccessKeyID":...,"SecretAccessKey":...,
-    "SessionToken":...,"Expires":...}}` -- short-lived (~15 min observed),
-    per-task AWS STS credentials via `AssumeRole`, IAM-scoped to this task's
-    own storage prefixes only.
-  - The cache-save ticket's `location` (e.g.
-    `storage/caches/<projectID>/<key>.tar.zst`) is not a URL fragment at
-    all -- it is a raw S3 *object key* in the bucket from `config`. The real
-    upload is a normal, SigV4-signed S3 `PutObject` (with the ticket's
+    returns short-lived, per-task AWS-style temporary credentials, scoped to
+    this task's own storage prefixes only -- fetched fresh for every call
+    rather than cached (see below for why).
+  - The cache-save ticket's `location` is not a URL fragment at all -- it is
+    a raw object-storage *key* within the bucket named by `config`. The
+    real upload is a normal, SigV4-signed S3 `PutObject` (with the ticket's
     `tags` sent as the `x-amz-tagging` header, an S3 lifecycle/retention
     hint, not a general metadata channel) using the temporary credentials
     from `credentials`. There is no separate presigned-PUT step and no
-    plain unauthenticated POST to `runner_host` -- that's exactly why every
-    prior attempt at the latter 404'd: no such route exists by design.
+    plain unauthenticated POST to `runner_host`.
   - Download is symmetric: `cache-restore`'s `location` is the same kind of
-    S3 key; fetching it is a SigV4-signed S3 `GetObject` with the same
+    key; fetching it is a SigV4-signed S3 `GetObject` with the same
     credentials call.
 
 `_s3_put_object()`/`_s3_get_object()`/`_sigv4_authorization()` below
@@ -410,8 +399,8 @@ def _s3_put_object(config, creds, key, body, tags=None):
     `tags` field, e.g. {"expiration_days":"15"}) is sent as the
     `x-amz-tagging` header -- S3's own mechanism for setting object tags at
     upload time in one request, rather than a separate PutObjectTagging
-    call (matches how the real `task-agent-subcommand-cache` Go client and
-    the AWS SDK's `Tagging` field both do it -- see module docstring)."""
+    call (matches how CircleCI's own internal caching client and the AWS
+    SDK's `Tagging` field both do it -- see module docstring)."""
     url, host, canonical_uri, region = _s3_target(config, key)
     payload_hash = hashlib.sha256(body).hexdigest()
     extra = {"content-type": "application/octet-stream"}

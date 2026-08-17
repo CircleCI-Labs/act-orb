@@ -590,9 +590,8 @@ a future pipeline-scoped token-minting step) and this orb aliases that variable'
 secrets bucket under the literal key `GITHUB_TOKEN` for you, and keeps the source variable's own
 name out of the plaintext `.env` file automatically -- so Act and the wrapped Action still see a
 plain `GITHUB_TOKEN`, with zero interface change on either side. This orb implements only the
-aliasing; it mints nothing itself. CircleCI's Sources of Change team already mints scoped GitHub
-App installation tokens tied to pipeline-trigger time (`TokenRestrictions{Scopes, RepositoryIDs}`,
-`CreateAndStoreTokenForPipeline` in `soc-integrations`) -- the only missing piece to get much
+aliasing; it mints nothing itself. Part of CircleCI's own platform tooling already mints scoped
+GitHub App installation tokens tied to pipeline-trigger time -- the only missing piece to get much
 closer to real GitHub Actions' own per-job token behavior is exposing one of those into a job's
 environment under some other env var name and pointing `github-token` at it. See
 `docs/ROADMAP.md` for the fuller rationale.
@@ -868,11 +867,10 @@ would be locally -- check a given action's own license/repository before relying
 context where that matters, the same diligence you'd apply running `act` directly yourself.
 
 `tools/ghac/`, the GitHub Actions workflow compiler backing `act/gha-compile`/`act/gha-render-job`,
-was adapted from a sibling working prototype (`gha-capability-spikes/workflow-compiler`), not
-copied verbatim and left unmodified -- real feature work (the `act/gha-render-job` orb-command
-integration, `strategy.matrix`/`runs-on: self-hosted` support) landed here first and was ported
-back. See [`tools/ghac/README.md`'s own "Provenance"
-section](tools/ghac/README.md#provenance) for the exact commit this was adapted from and the
+was adapted from an internal working prototype, not copied verbatim and left unmodified -- real
+feature work (the `act/gha-render-job` orb-command integration, `strategy.matrix`/
+`runs-on: self-hosted` support) landed here first and was ported back. See
+[`tools/ghac/README.md`'s own "Provenance" section](tools/ghac/README.md#provenance) for the
 complete, honest history of what changed since.
 
 ## Resources

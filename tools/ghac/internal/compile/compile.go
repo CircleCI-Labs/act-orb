@@ -1,5 +1,6 @@
 // Package compile implements the GitHub Actions workflow -> CircleCI config
-// compiler prototype described in gha-capability-spikes/workflow-compiler.
+// compiler, originally adapted from an internal working prototype (see
+// ../../README.md's "Provenance" section).
 //
 // Scope (MVP): multi-job workflows connected only by `needs:`. See the
 // top-level README for the full supported/rejected/no-silent-gaps table.

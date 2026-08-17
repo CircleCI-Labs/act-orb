@@ -6,15 +6,15 @@ reads) and prints the raw JSON returned by:
   - GET  {runner_host}/api/v2/output/config
   - GET  {runner_host}/api/v2/output/credentials?provider=s3
 
-Purpose: earlier research (Sourcegraph read of circleci/output and
-circleci/task-agent-subcommand-cache source) established the SHAPE of the
-real cache-save upload contract (config -> STS-style credentials -> signed
-S3 PutObject) but not the exact JSON field names/casing these two HTTP
-endpoints actually emit on the wire. This script exists to capture that,
-once, from a real job, so cache_shim_server.py's S3 client can be built
-against real data instead of a guess. Delete this file (and the temporary
-run step that invokes it) once that's captured and implemented -- or leave
-it as a standing diagnostic if a future protocol change needs re-probing.
+Purpose: earlier research into CircleCI's own runner-side output API
+established the SHAPE of the real cache-save upload contract (config ->
+STS-style credentials -> signed S3 PutObject) but not the exact JSON field
+names/casing these two HTTP endpoints actually emit on the wire. This
+script exists to capture that, once, from a real job, so
+cache_shim_server.py's S3 client can be built against real data instead of
+a guess. Delete this file (and the temporary run step that invokes it) once
+that's captured and implemented -- or leave it as a standing diagnostic if
+a future protocol change needs re-probing.
 
 Run: python3 test/cache-shim/probe_output_api.py
 """
