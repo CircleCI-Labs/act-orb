@@ -512,7 +512,7 @@ while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
         # then blocks forever waiting for an HTTP response that never
         # comes -- which silently turns this "bounded" startup wait into
         # an unbounded one, exactly the failure mode this loop exists to
-        # prevent. Caught by this repo's own test suite (test/run_tests.sh
+        # prevent. Caught by this repo's own test suite (test/oidc-shim/run_tests.sh
         # Test 7): before this fix, an occupied port made the whole start
         # script hang for as long as whatever was occupying the port kept
         # running, regardless of startup-timeout.
