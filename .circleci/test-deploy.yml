@@ -483,6 +483,184 @@ jobs:
             echo "credentials), and this job restored the exact original bytes via a real,"
             echo "signed S3 GetObject -- not a same-process shortcut, not a coincidence."
 
+  # Real-CI coverage for the OIDC shim. Before this job, `act/oidc-shim` had
+  # NO CI coverage at all -- the only "oidc" hits in this file were inside
+  # test_is_true_no_drift, which checks the embedded is_true() helper and
+  # never starts the shim. test/oidc-shim/run_tests.sh covers the logic
+  # thoroughly (~21 assertions) but drives the raw script locally against a
+  # FAKE `circleci` binary; it cannot exercise the real job-runtime CLI, a
+  # real CircleCI-signed mint, or the already-injected
+  # CIRCLE_OIDC_TOKEN/CIRCLE_OIDC_TOKEN_V2 env vars, because none of those
+  # exist outside a real CircleCI job. This job closes exactly that gap:
+  # starts the shim via the orb's own `act/oidc-shim` command (not the raw
+  # script), requests a real token through it, and -- the most important
+  # assertion here -- proves the auth gate actually rejects both a wrong
+  # bearer token and a request with no Authorization header at all. An
+  # earlier revision of this shim generated a per-job request token and then
+  # discarded it without ever checking it (`_unused_auth_header`) -- every
+  # request, authenticated or not, got a 200 with a real minted token. A
+  # happy-path-only test would not have caught that; this job would.
+  #
+  # `machine`, not docker+setup_remote_docker -- matches this orb's
+  # documented default topology (see test_cache_shim's own comment) and
+  # gives `act/oidc-shim`'s advertise-host auto-detection a real local
+  # Docker daemon to find the bridge gateway through, exactly as it would
+  # run for a real customer using every default.
+  #
+  # The audience requested through the shim is deliberately the SAME
+  # audience already baked into $CIRCLE_OIDC_TOKEN_V2 (its own `aud` claim,
+  # decoded locally -- no network call), not a made-up string like
+  # "sts.amazonaws.com": that audience is already proven mintable for this
+  # exact job (CircleCI itself just minted a token for it to populate
+  # CIRCLE_OIDC_TOKEN_V2), so this job needs no extra reference mint call
+  # and can't fail due to some unrelated custom-claims/audience setup this
+  # project may or may not have. The one real mint call that does happen is
+  # the shim's own, through the real `circleci` job-runtime CLI, in response
+  # to an HTTP request shaped exactly like actions/toolkit's
+  # core.getIDToken() (test/oidc-shim/toolkit_client.py, reused from the
+  # local harness). The freshly minted JWT itself is never echoed to job
+  # output -- unlike $CIRCLE_OIDC_TOKEN_V2, a token minted this way is NOT
+  # automatically masked by CircleCI (see the CLI's own docs), so only
+  # derived, non-sensitive facts about it (shape, claims) are asserted and
+  # printed; see test/cache-shim/probe_output_api.py's redaction precedent
+  # in this same repo for why that matters.
+  test_oidc_shim:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - act/oidc-shim
+      - run:
+          name: Decode the default audience from the already-injected OIDC token (no mint call)
+          command: |
+            set -euo pipefail
+            SRC_TOKEN="${CIRCLE_OIDC_TOKEN_V2:-${CIRCLE_OIDC_TOKEN:-}}"
+            if [ -z "${SRC_TOKEN}" ]; then
+              echo "FAIL: neither CIRCLE_OIDC_TOKEN_V2 nor CIRCLE_OIDC_TOKEN is set in this job --" >&2
+              echo "OIDC does not appear to be enabled for this project, so this job cannot prove" >&2
+              echo "anything about a real mint call. See the README's OIDC section." >&2
+              exit 1
+            fi
+
+            # Written to a tmp file, one printf'd line at a time, rather than a
+            # `python3 -c "..."` multi-line string or a heredoc -- both trip
+            # things up here for different reasons: a heredoc's own marker
+            # characters get misread by CircleCI's pipeline-parameter
+            # substitution scanner inside a YAML block-literal `command:` (see
+            # e.g. test_collect_outputs_script's own comment above), and a
+            # multi-line double-quoted `-c` string has to sit at THIS block's
+            # own indentation to stay valid YAML, which is itself invalid
+            # Python (unexpected indent). This same decode script is reused
+            # by the next step below, unchanged, on the real minted token.
+            DECODE_AUD_PY=/tmp/oidc-shim-test-decode-aud.py
+            {
+              printf '%s\n' 'import base64, json, sys'
+              printf '%s\n' 'tok = sys.argv[1]'
+              printf '%s\n' "payload_b64 = tok.split('.')[1]"
+              printf '%s\n' "payload_b64 += '=' * (-len(payload_b64) % 4)"
+              printf '%s\n' "print(json.loads(base64.b64decode(payload_b64))['aud'])"
+            } > "${DECODE_AUD_PY}"
+
+            DEFAULT_AUD="$(python3 "${DECODE_AUD_PY}" "${SRC_TOKEN}")"
+            if [ -z "${DEFAULT_AUD}" ]; then
+              echo "FAIL: could not decode an 'aud' claim from the already-injected OIDC token." >&2
+              exit 1
+            fi
+            echo "export OIDC_TEST_DEFAULT_AUD=${DEFAULT_AUD}" >> "${BASH_ENV}"
+            echo "OK: default audience is ${DEFAULT_AUD} (this job's own org id, taken from the"
+            echo "pre-injected token's own 'aud' claim -- not a secret, just a UUID). Will ask the"
+            echo "shim to mint for this SAME audience, which is already proven mintable for this job."
+      - run:
+          name: Real command, real mint, real auth gate -- request a token and assert rejection of bad auth
+          command: |
+            set -euo pipefail
+            if [ ! -f /tmp/.oidc-shim/server.log ]; then
+              echo "FAIL: expected the real act/oidc-shim command to have started the shim (no log" >&2
+              echo "at /tmp/.oidc-shim/server.log -- its default state-dir)." >&2
+              exit 1
+            fi
+            if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+              echo "FAIL: act/oidc-shim did not export ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN to \$BASH_ENV" >&2
+              exit 1
+            fi
+            echo "OK: shim started via the real act/oidc-shim command and exported URL+TOKEN."
+            CLIENT="test/oidc-shim/toolkit_client.py"
+
+            echo "--- Negative case: absent Authorization header ---"
+            set +e
+            OUT_NOAUTH="$(python3 "${CLIENT}" "${ACTIONS_ID_TOKEN_REQUEST_URL}" "" "${OIDC_TEST_DEFAULT_AUD}" 2>&1)"
+            RC_NOAUTH=$?
+            set -e
+            echo "${OUT_NOAUTH}"
+            if [ "${RC_NOAUTH}" -eq 0 ]; then
+              echo "FAIL: a request with NO Authorization header unexpectedly succeeded (rc=0) --" >&2
+              echo "the shim minted a real token for a completely unauthenticated caller." >&2
+              exit 1
+            fi
+            case "${OUT_NOAUTH}" in
+              *"Error Code : 401"*) echo "OK: absent Authorization header -> 401" ;;
+              *)
+                echo "FAIL: absent Authorization header did not produce a 401. This is exactly the" >&2
+                echo "shape of the '_unused_auth_header' regression this job exists to catch: the" >&2
+                echo "auth check computed a result and then never gated anything on it." >&2
+                exit 1
+                ;;
+            esac
+
+            echo "--- Negative case: wrong bearer token ---"
+            set +e
+            OUT_WRONG="$(python3 "${CLIENT}" "${ACTIONS_ID_TOKEN_REQUEST_URL}" "not-the-real-token-$(date +%s)" "${OIDC_TEST_DEFAULT_AUD}" 2>&1)"
+            RC_WRONG=$?
+            set -e
+            echo "${OUT_WRONG}"
+            if [ "${RC_WRONG}" -eq 0 ]; then
+              echo "FAIL: a request with a WRONG bearer token unexpectedly succeeded (rc=0)." >&2
+              exit 1
+            fi
+            case "${OUT_WRONG}" in
+              *"Error Code : 401"*) echo "OK: wrong bearer token -> 401" ;;
+              *)
+                echo "FAIL: wrong bearer token did not produce a 401 -- see the '_unused_auth_header'" >&2
+                echo "note above; this is the real security regression this job guards against." >&2
+                exit 1
+                ;;
+            esac
+
+            if printf '%s%s' "${OUT_NOAUTH}" "${OUT_WRONG}" | grep -qF "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"; then
+              echo "FAIL: a 401 response leaked the real per-job request token." >&2
+              exit 1
+            fi
+            echo "OK: neither 401 response leaked the real per-job request token."
+
+            echo "--- Positive case: correct bearer token -- real mint through the real circleci CLI ---"
+            TOKEN="$(python3 "${CLIENT}" "${ACTIONS_ID_TOKEN_REQUEST_URL}" "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${OIDC_TEST_DEFAULT_AUD}")"
+            if [ -z "${TOKEN}" ]; then
+              echo "FAIL: the correct bearer token did not get a token back." >&2
+              exit 1
+            fi
+            case "${TOKEN}" in
+              ey*) ;;
+              *)
+                echo "FAIL: the returned value does not look like a JWT (expected it to start with 'ey')." >&2
+                exit 1
+                ;;
+            esac
+            SEGMENTS=$(($(printf '%s' "${TOKEN}" | tr -cd '.' | wc -c) + 1))
+            if [ "${SEGMENTS}" -ne 3 ]; then
+              echo "FAIL: the returned value is not a 3-segment JWT (got ${SEGMENTS} segments)." >&2
+              exit 1
+            fi
+            RETURNED_AUD="$(python3 /tmp/oidc-shim-test-decode-aud.py "${TOKEN}")"
+            if [ "${RETURNED_AUD}" != "${OIDC_TEST_DEFAULT_AUD}" ]; then
+              echo "FAIL: the minted token's aud (${RETURNED_AUD}) does not match the requested" >&2
+              echo "audience (${OIDC_TEST_DEFAULT_AUD})." >&2
+              exit 1
+            fi
+            echo "OK: a real, well-formed CircleCI OIDC token came back (correct 'aud', 3-segment"
+            echo "JWT shape), minted through the real 'circleci run oidc get' invocation the shim"
+            echo "shells out to, in response to a request shaped exactly like actions/toolkit's"
+            echo "core.getIDToken(). The JWT value itself is deliberately never printed above."
+
   # Real integration coverage for enabling Act's OWN built-in artifact
   # server (`--artifact-server-path`) -- added for family parity, and much
   # smaller than a from-scratch artifact shim would have been: Act already
@@ -950,6 +1128,43 @@ jobs:
             echo "OK: dash-sanitized key exported correctly, and a shell-metacharacter value"
             echo "round-tripped exactly without executing -- printf '%q' quoting works as designed."
 
+  # Real drift check for the two embedded Python shim servers. cache-shim-start.sh
+  # and oidc-shim-start.sh each embed a mechanically generated, byte-identical
+  # heredoc copy of cache_shim_server.py/oidc_shim_server.py (same
+  # one-script-file-per-command constraint as the is_true() consolidation
+  # below -- see that job's own comment). Both start scripts' docstrings
+  # claimed a job like this already existed and would "fail loudly" on
+  # drift; before this job, that claim was false -- there was no job, and no
+  # grep hit anywhere in .circleci/ or test/ for either sync script's name.
+  # This is live risk, not theoretical: cache_shim_server.py was rewritten
+  # for the SigV4 cache work, and a future edit to either canonical .py file
+  # that skips its sync-embedded-*-server.sh script would ship a silently
+  # stale embedded server with nothing to catch it. This job regenerates
+  # both embedded copies from their canonical sources and asserts the
+  # checked-in copies already match -- modeled directly on
+  # test_is_true_no_drift below, the same shape, proven to already work.
+  test_embedded_server_no_drift:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Regenerate both embedded shim-server copies and assert nothing changed
+          command: |
+            set -euo pipefail
+            bash src/scripts/sync-embedded-cache-server.sh
+            bash src/scripts/sync-embedded-oidc-server.sh
+            if ! git diff --exit-code -- src/scripts/cache-shim-start.sh src/scripts/oidc-shim-start.sh; then
+              echo "FAIL: regenerating the embedded shim-server copies from their canonical .py" >&2
+              echo "files changed cache-shim-start.sh and/or oidc-shim-start.sh above -- one of" >&2
+              echo "them was hand-edited without also running the matching" >&2
+              echo "sync-embedded-cache-server.sh/sync-embedded-oidc-server.sh script (or the" >&2
+              echo "canonical .py changed and the embedded copy was never regenerated). Run the" >&2
+              echo "appropriate sync script and commit the result." >&2
+              exit 1
+            fi
+            echo "OK: both embedded shim-server copies match their canonical .py sources exactly."
+
   # Real drift check for the is_true() consolidation: install.sh, run-act.sh, cache-shim-start.sh,
   # and oidc-shim-start.sh each embed a mechanically generated, byte-identical copy of
   # src/scripts/lib/is_true.sh (a plain <<include(...)>> was tried first and reverted -- real
@@ -1042,6 +1257,9 @@ workflows:
       - test_artifacts:
           name: Testing Artifacts (Act's built-in server)
           filters: *filters
+      - test_oidc_shim:
+          name: Testing OIDC Shim (real command, real mint, real auth gate)
+          filters: *filters
       - test_run_act_booleans:
           name: Testing Boolean Parameter Encoding
           filters: *filters
@@ -1056,6 +1274,9 @@ workflows:
           filters: *filters
       - test_collect_outputs_script:
           name: Testing collect-outputs.sh Directly
+          filters: *filters
+      - test_embedded_server_no_drift:
+          name: Testing Embedded Shim Servers (no drift)
           filters: *filters
       - test_is_true_no_drift:
           name: Testing is_true() Consolidation (no drift)
@@ -1140,6 +1361,8 @@ workflows:
             - "Testing create-env-var-secret-files.sh Directly"
             - "Testing collect-outputs.sh Directly"
             - "Testing is_true() Consolidation (no drift)"
+            - "Testing OIDC Shim (real command, real mint, real auth gate)"
+            - "Testing Embedded Shim Servers (no drift)"
       - orb-tools/publish:
           name: "Publish Dev"
           orb_name: cci-labs/act

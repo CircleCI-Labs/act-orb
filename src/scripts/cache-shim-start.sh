@@ -56,11 +56,13 @@ mkdir -p "${STATE_DIR}"
 # the SINGLE SOURCE OF TRUTH; this heredoc is a mechanically generated copy,
 # not hand-maintained -- regenerate it with
 # `bash src/scripts/sync-embedded-cache-server.sh` any time
-# `cache_shim_server.py` changes. `test/run_tests.sh`'s drift check (if
-# present) diffs the two and fails loudly if they're ever out of sync. See
-# `cache_shim_server.py`'s own module docstring for the full design
-# rationale, the exact protocol translation, the known real gap in the
-# upload/download leg, and the security posture -- not repeated here.
+# `cache_shim_server.py` changes. `test_embedded_server_no_drift` in
+# .circleci/test-deploy.yml is the real, working drift check for this one
+# (regenerates the embedded copy from the canonical file and asserts `git
+# diff` is clean) -- it diffs the two and fails loudly if they're ever out
+# of sync. See `cache_shim_server.py`'s own module docstring for the full
+# design rationale, the exact protocol translation, the known real gap in
+# the upload/download leg, and the security posture -- not repeated here.
 cat > "${SERVER_PY}" << 'CACHE_SHIM_SERVER_PY_EOF'
 #!/usr/bin/env python3
 """

@@ -56,12 +56,15 @@ mkdir -p "${STATE_DIR}"
 # in this same directory is the SINGLE SOURCE OF TRUTH for the server; this
 # heredoc is a mechanically generated copy of it, not hand-maintained --
 # regenerate it with `bash src/scripts/sync-embedded-oidc-server.sh` any time
-# `oidc_shim_server.py` changes. `test/run_tests.sh`'s drift check
-# additionally diffs the two and fails loudly if they are ever out of sync
-# (belt-and-suspenders: catches a hand-edit of either copy that skipped the
-# sync script). See `oidc_shim_server.py`'s own module docstring for the
-# full design rationale (why Python, the exact toolkit request/response
-# contract, and the security posture) -- it is not repeated here.
+# `oidc_shim_server.py` changes. `test_embedded_server_no_drift` in
+# .circleci/test-deploy.yml is the real, working drift check for this one
+# (regenerates the embedded copy from the canonical file and asserts `git
+# diff` is clean) -- it additionally diffs the two and fails loudly if they
+# are ever out of sync (belt-and-suspenders: catches a hand-edit of either
+# copy that skipped the sync script). See `oidc_shim_server.py`'s own
+# module docstring for the full design rationale (why Python, the exact
+# toolkit request/response contract, and the security posture) -- it is
+# not repeated here.
 cat > "${SERVER_PY}" << 'OIDC_SHIM_SERVER_PY_EOF'
 #!/usr/bin/env python3
 """
