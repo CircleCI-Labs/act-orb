@@ -1,8 +1,13 @@
 # Act Orb (Unofficial) [![CircleCI Build Status](https://circleci.com/gh/CircleCI-Labs/act-orb.svg?style=shield "CircleCI Build Status")](https://circleci.com/gh/CircleCI-Labs/act-orb) [![CircleCI Orb Version](https://badges.circleci.com/orbs/cci-labs/act.svg)](https://circleci.com/developer/orbs/orb/cci-labs/act) [![GitHub License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](https://raw.githubusercontent.com/CircleCI-Labs/act-orb/master/LICENSE) [![CircleCI Community](https://img.shields.io/badge/community-CircleCI%20Discuss-343434.svg)](https://discuss.circleci.com/c/ecosystem/orbs)
 
-The Act Orb allows developers to run GitHub Actions directly on CircleCI using the [Act CLI](https://nektosact.com/). This orb bridges the gap between GitHub Actions and CircleCI, enabling seamless CI/CD workflows using GitHub Actions syntax while leveraging CircleCI’s powerful infrastructure.  
+The Act Orb runs a real GitHub Action inside a CircleCI job, using the open-source [Act
+CLI](https://nektosact.com/) so `uses:`/`with:`/`env:` behave exactly as they would on GitHub.
+Beyond that one-action-per-call core, it can also compile a whole `.github/workflows/*.yml` file
+into a wired-together, multi-job CircleCI config -- see the capability table below for the full
+surface, or jump straight to the Quick Start.
 
-This orb would not be possible without the contributors who have worked on the [Act CLI](https://nektosact.com/). 
+This orb would not be possible without the contributors who have worked on the [Act
+CLI](https://nektosact.com/).
 
 ---
 **Disclaimer:**
@@ -14,67 +19,6 @@ CircleCI Labs, including this repo, is a collection of solutions developed by me
 -   ❌ **not** officially supported by CircleCI support
 
 ---
-
-## Scope: one action per job/command invocation
-
-This orb (like its ecosystem-bridge siblings -- Bitrise, Harness, Bitbucket Pipes, Buildkite)
-generates **one job, one step, one action** per `act/act`/`act/run-act` call, by design. It is
-not a general GitHub Actions workflow executor for that call: give it a `uses`/`with`/`env`
-triple (or your own hand-written workflow file) and it runs exactly that. If you need a
-multi-step workflow in one job, hand-write the workflow file and pass it via
-`skip-create-workflow-file: true` (see [Examples](#examples)).
-
-**Unlike its siblings, this orb also has a second, larger-scoped escape hatch for the case that
-single-action scope doesn't cover:** the [GitHub Actions workflow
-compiler](#github-actions-workflow-compiler) compiles a whole, real, multi-job
-`.github/workflows/*.yml` file into a wired-together, multi-job CircleCI config -- one CircleCI
-job per GitHub job, `needs:` becoming `requires:`, `strategy.matrix` becoming a real CircleCI
-`matrix:` job. That feature is deliberately a separate, additive layer on top of the
-one-action-per-call core, not a replacement for it: every job the compiler generates still calls
-into that same one-action machinery under the hood. See [How it fits
-together](#how-it-fits-together) for exactly how the two connect.
-
-## Features
-- Execute GitHub Actions workflows within CircleCI.
-- Use familiar GitHub Actions syntax (`uses`, `with`, `env`), or the family-consistent `id`/`inputs` aliases if you're moving between CircleCI's other ecosystem-bridge orbs (Bitrise, Harness, Bitbucket Pipes, Buildkite).
-- Integrate with existing CircleCI pipelines.
-- Leverage CircleCI caching for faster runs.
-- Compile a real, multi-job `.github/workflows/*.yml` file -- including `strategy.matrix` and
-  `runs-on: self-hosted` -- into a wired-together CircleCI config (see
-  [GitHub Actions workflow compiler](#github-actions-workflow-compiler)).
-- Surface the wrapped action's own outputs into `$BASH_ENV` for later native CircleCI steps (opt-in -- see [Capturing action outputs](#capturing-action-outputs)).
-- Pass a `services:` block straight through to Act (see [Service containers](#service-containers)).
-- Mint a real, CircleCI-signed OIDC token for actions that call `core.getIDToken()` (e.g.
-  `aws-actions/configure-aws-credentials`) -- Act itself implements none of GitHub's own OIDC
-  issuance (see [OIDC token issuance for wrapped Actions](#oidc-token-issuance-for-wrapped-actions)).
-- Translate `actions/cache@v4`'s real protocol against CircleCI's own runner API, with a real,
-  SigV4-signed S3 upload/download leg -- durable, cross-job cache hits are proven in this orb's own
-  CI (see [Actions cache shim](#actions-cache-shim)).
-- Enable Act's own built-in artifact server for `actions/upload-artifact`/`download-artifact@v4`
-  (see [Artifacts](#artifacts)).
-
-## Table of contents
-
-- [Quick Start](#quick-start)
-- [Scope: one action per job/command invocation](#scope-one-action-per-jobcommand-invocation)
-- [How it fits together](#how-it-fits-together) -- two architecture diagrams and the high-level mental model
-- [Mapping GitHub Actions to CircleCI](#mapping-github-actions-to-circleci) -- the concept-by-concept translation, with the *why*
-- [Defaults that deviate from Act](#defaults-that-deviate-from-act)
-- [Caching](#caching)
-- [Actions cache shim](#actions-cache-shim)
-- [OIDC token issuance for wrapped Actions](#oidc-token-issuance-for-wrapped-actions)
-- [Artifacts](#artifacts)
-- [Capturing action outputs](#capturing-action-outputs)
-- [Service containers](#service-containers)
-- [Security notes](#security-notes)
-- [Command and job reference](#command-and-job-reference) -- every command/job, every parameter, and when to reach for the granular commands
-- [What does not work](#what-does-not-work) -- the honest limits, including platform-level gaps no orb can shim around
-- [GitHub Actions workflow compiler](#github-actions-workflow-compiler)
-- [Legal / compliance](#legal--compliance)
-- [Resources](#resources)
-- [Examples](#examples)
-- [How to Contribute](#how-to-contribute)
-- [How to Publish An Update](#how-to-publish-an-update)
 
 ## Quick Start
 
@@ -98,6 +42,63 @@ That's it for the common case -- `act/act` is a full job (checkout, install Act,
 one-step workflow file from `uses`/`with`/`env`, run it, cache what's cacheable). Use the `act/act`
 **command** instead of the job if you need to run it inside your own executor/job (see
 [Examples](#examples)).
+
+## Capabilities
+
+Everything below the surface area a `uses:`/`with:`/`env:` call touches -- what handles it, and
+where to read the detail.
+
+| Capability | Command(s) | Detail |
+|---|---|---|
+| Run one GitHub Action as a step | `act` (job or command) | [Quick Start](#quick-start) above |
+| Compile a whole multi-job `.github/workflows/*.yml` | `gha-compile`, `gha-render-job` | [GitHub Actions workflow compiler](#github-actions-workflow-compiler) |
+| Cache the Act CLI, its actions dir, and platform images | `cache-cli` / `cache-actions` / `cache-images` | [Caching](#caching) |
+| A real `actions/cache@v4` backend (SigV4-signed S3) | `cache-shim` | [Actions cache shim](#actions-cache-shim) |
+| A real, CircleCI-signed OIDC token for `core.getIDToken()` | `oidc-shim` | [OIDC token issuance](#oidc-token-issuance-for-wrapped-actions) |
+| `actions/upload-artifact`/`download-artifact@v4` | `artifact-server-path` param on `act`/`run-act` | [Artifacts](#artifacts) |
+| Surface an action's own outputs to later native steps | `outputs` param on `act`/`run-act` | [Capturing action outputs](#capturing-action-outputs) |
+| Pass a GitHub `services:` block straight through | `services` param on `act`/`run-act` | [Service containers](#service-containers) |
+
+## Table of contents
+
+- [Scope: one action per job/command invocation](#scope-one-action-per-jobcommand-invocation)
+- [How it fits together](#how-it-fits-together) -- two diagrams and the high-level mental model
+- [Mapping GitHub Actions to CircleCI](#mapping-github-actions-to-circleci) -- the concept-by-concept translation, with the *why*
+- [Defaults that deviate from Act](#defaults-that-deviate-from-act)
+- [Caching](#caching)
+- [Actions cache shim](#actions-cache-shim)
+- [OIDC token issuance for wrapped Actions](#oidc-token-issuance-for-wrapped-actions)
+- [Artifacts](#artifacts)
+- [Capturing action outputs](#capturing-action-outputs)
+- [Service containers](#service-containers)
+- [Security notes](#security-notes)
+- [Command and job reference](#command-and-job-reference) -- every command/job, every parameter, and when to reach for the granular commands
+- [What does not work](#what-does-not-work) -- the honest limits, including platform-level gaps no orb can shim around
+- [GitHub Actions workflow compiler](#github-actions-workflow-compiler)
+- [Legal / compliance](#legal--compliance)
+- [Resources](#resources)
+- [Examples](#examples)
+- [How to Contribute](#how-to-contribute)
+- [How to Publish An Update](#how-to-publish-an-update)
+
+## Scope: one action per job/command invocation
+
+This orb (like its ecosystem-bridge siblings -- Bitrise, Harness, Bitbucket Pipes, Buildkite)
+generates **one job, one step, one action** per `act/act`/`act/run-act` call, by design. It is
+not a general GitHub Actions workflow executor for that call: give it a `uses`/`with`/`env`
+triple (or your own hand-written workflow file) and it runs exactly that. If you need a
+multi-step workflow in one job, hand-write the workflow file and pass it via
+`skip-create-workflow-file: true` (see [Examples](#examples)).
+
+**Unlike its siblings, this orb also has a second, larger-scoped escape hatch for the case that
+single-action scope doesn't cover:** the [GitHub Actions workflow
+compiler](#github-actions-workflow-compiler) compiles a whole, real, multi-job
+`.github/workflows/*.yml` file into a wired-together, multi-job CircleCI config -- one CircleCI
+job per GitHub job, `needs:` becoming `requires:`, `strategy.matrix` becoming a real CircleCI
+`matrix:` job. That feature is deliberately a separate, additive layer on top of the
+one-action-per-call core, not a replacement for it: every job the compiler generates still calls
+into that same one-action machinery under the hood. See [How it fits
+together](#how-it-fits-together) for exactly how the two connect.
 
 ## How it fits together
 
@@ -128,26 +129,28 @@ Every `act/act`/`act/run-act` call -- Path A directly, or Path B's generated job
 `skip-create-workflow-file: true` -- goes through this same sequence:
 
 ```mermaid
-flowchart TD
-    A1["uses / with / env<br/>(one action, given directly to act/act/run-act --<br/>or your own hand-written/compiler-rendered workflow file)"]
+flowchart LR
+    A1["uses / with / env<br/>(or your own workflow file)"] --> ACTCMD
 
-    SHIM["optional earlier steps, same job:<br/>act/oidc-shim / act/cache-shim<br/>(mint an OIDC token / translate the cache protocol)"]
+    SHIM["oidc-shim / cache-shim<br/>(optional, earlier step)"] -. "①" .-> ACTCMD
 
-    A1 --> ACTCMD
-    SHIM -. "$BASH_ENV" .-> ACTCMD
-
-    subgraph ACTCMD["act/act (job) -- act/run-act (command)"]
-        direction TB
-        INSTALL["install<br/>(Act CLI, cached)"] --> CEVSF["create-env-var-secret-files<br/>(snapshots the job's env -&gt; .env / .secrets / .vars)"] --> CWF["create-workflow-file<br/>(skipped if a workflow file was already supplied)"] --> RA["run-act<br/>(invokes the act CLI)"]
+    subgraph ACTCMD["act/act (job) / run-act (command)"]
+        direction LR
+        INSTALL["install"] --> CEVSF["create-env-var-<br/>secret-files"] --> CWF["create-workflow-file"] --> RA["run-act"]
     end
 
-    RA --> CONTAINER["Act-spawned Docker container<br/>(the GitHub Action actually runs here)"]
-
-    CONTAINER -->|"steps.*.outputs.* (outputs: set)"| COLLECT["collect-outputs<br/>-&gt; $BASH_ENV"]
-    CONTAINER -->|"actions/upload-artifact@v4<br/>(artifact-server-path set)"| ARTSRV["Act's built-in<br/>artifact-v4 server"]
-    ARTSRV --> STOREART["store_artifacts /<br/>persist_to_workspace"]
-    COLLECT --> NEXT["later native CircleCI step<br/>reads a plain shell variable"]
+    RA --> CONTAINER["Act's Docker container"]
+    CONTAINER -->|"②"| COLLECT["collect-outputs"]
+    CONTAINER -->|"③"| ARTSRV["artifact server"]
 ```
+
+1. Via `$BASH_ENV` -- a shim run as an earlier step exports its token/credential, and
+   `create-env-var-secret-files` (which snapshots the *entire* job environment) picks it up
+   automatically, with zero call-site wiring.
+2. `steps.*.outputs.*`, only when `outputs` is set -- resolved inside the container, handed off to
+   `collect-outputs`, which exports it into `$BASH_ENV` for a later native CircleCI step.
+3. `actions/upload-artifact@v4`, only when `artifact-server-path` is set -- Act's own built-in
+   artifact-v4 server; a native `store_artifacts`/`persist_to_workspace` step reads its output.
 
 Reading it:
 
@@ -166,27 +169,28 @@ Reading it:
 ### The compiler's two-config flow
 
 `gha-compile` doesn't replace the core pipeline above -- it produces the inputs to it, once per
-generated job, across two separate CircleCI configs (this is the piece of the architecture Jim
-specifically flagged as needing its own picture, distinct from the core pipeline):
+generated job, across two separate CircleCI configs:
 
 ```mermaid
-flowchart TD
-    WF[".github/workflows/*.yml<br/>(the real, multi-job GitHub workflow you commit)"]
+flowchart LR
+    WF[".github/workflows/*.yml"] --> SETUP
 
-    WF --> SETUP
-
-    subgraph SETUP["Config A -- the setup: true config you commit<br/>(runs once, at pipeline-trigger time)"]
+    subgraph SETUP["Config A: setup:true, committed"]
         direction LR
-        CO0["checkout"] --> GC["act/gha-compile<br/>(reads Config A's own checked-out copy of WF)"] --> CONT["circleci/continuation<br/>continue"]
+        CO0["checkout"] --> GC["gha-compile"] --> CONT["continuation/continue"]
     end
 
-    CONT -->|"hands over Config B: one CircleCI job per<br/>GH job, wired with requires:/filters:,<br/>strategy.matrix -&gt; matrix:,<br/>self-hosted -&gt; resource_class"| GENJOB
+    CONT -->|"④"| GENJOB
 
-    subgraph GENJOB["Config B -- generated fresh every pipeline run, never committed"]
+    subgraph GENJOB["Config B: generated per run, never committed"]
         direction LR
-        CO1["checkout<br/>(same WF, checked out again)"] --> GRJ["act/gha-render-job<br/>(re-derives just THIS job's<br/>needs:-stripped slice of WF)"] --> ACT["act/act<br/>skip-create-workflow-file: true<br/>(the core pipeline above, from here on)"]
+        CO1["checkout"] --> GRJ["gha-render-job"] --> ACT["act/act"]
     end
 ```
+
+4. `continuation/continue` hands over Config B -- one CircleCI job per GitHub job, wired with
+   `requires:`/`filters:`, `strategy.matrix` -> `matrix:`, `runs-on: self-hosted` ->
+   `resource_class`.
 
 Reading it:
 
@@ -302,8 +306,7 @@ live CircleCI API and S3. A **durable, cross-job cache hit** is proven too, not 
 save+restore: `test_cache_shim_durable_hit_save`/`test_cache_shim_durable_hit_restore` in
 `.circleci/test-deploy.yml` are two *separate* jobs -- separate machine, separate `act/cache-shim`
 process, separate STS credentials fetched fresh for the restore leg -- where the second job
-`requires:` the first and asserts a byte-for-byte diff against the original file. See "How the
-protocol translation works" below for the contract this closes and how it was found.
+`requires:` the first and asserts a byte-for-byte diff against the original file.
 
 ### Quick start
 
@@ -346,122 +349,22 @@ tcp: lookup cache-shim.localhost: no such host`). Leaving the variable unset cos
 `actions/cache`'s own `isGhes()` already defaults to `https://github.com` (i.e. "not GHES") when
 it's absent.
 
-### How the protocol translation works
+### Protocol, evidence, and security detail
 
-Verified directly against `actions/toolkit`'s real source (`packages/cache/src/cache.ts`,
-`cacheTwirpClient.ts`, `uploadUtils.ts`), not guessed:
+The exact Twirp RPC sequence, the Azure block-blob chunked-upload reassembly (including the
+out-of-order-block and no-`comp`-single-PUT cases a naive implementation gets wrong), and the real
+SigV4-signed S3 upload/download contract -- plus how an earlier version's "known gap" (reading
+`location` as a route on `runner_host` itself, which 404'd) was diagnosed and fixed -- are
+documented in full, with sources, in [`docs/CACHE-SHIM.md`](docs/CACHE-SHIM.md).
 
-- `actions/cache`'s v2 client speaks Twirp -- plain JSON POSTs (always `Content-Type:
-  application/json`, confirmed in the real client source) to
-  `${ACTIONS_RESULTS_URL}twirp/github.actions.results.api.v1.CacheService/<Method>`, authenticated
-  with `Authorization: Bearer ${ACTIONS_RUNTIME_TOKEN}`.
-- `CreateCacheEntry{key,version}` gets back `{ok, signed_upload_url}`.
-- The actual archive bytes go through Azure Blob's real block-blob wire protocol against that URL.
-  For anything over `maxSingleShotSize` (128 MiB): a sequence of `PUT
-  ...?comp=block&blockid=<base64>` calls (one per chunk, `uploadConcurrency` chunks in flight at
-  once by default, so blocks can and do complete **out of order**), followed by one `PUT
-  ...?comp=blocklist` that commits the upload. For anything smaller -- the common case, confirmed
-  live against this shim's own CI test with an 843-byte file -- it's exactly **one** plain `PUT` of
-  the whole body with **no `comp` parameter at all**; treating that as a 400 (this shim's first
-  version did, until a real CI run caught it) breaks every small, everyday cache. Either way there
-  is no separate "give me a presigned URL" round trip on top of this -- the URL from
-  `CreateCacheEntry` *is* what receives the bytes. `cache_shim_server.py` decodes each block's real
-  index from its `blockid` (the same two-format decode `falcondev-oss/github-actions-cache-server`
-  -- an unrelated, independently-built OSS project speaking this same real protocol -- documents;
-  re-derived here from first principles, not copied) and reassembles the archive in the correct
-  order regardless of arrival order. Both paths are exercised in the local test suite (blocks are
-  sent to the test server in reverse order on purpose; a separate case drives the no-`comp`
-  single-shot path).
-- `FinalizeCacheEntryUpload{key,version,size_bytes}` gets back `{ok, entry_id}`.
-- `GetCacheEntryDownloadURL{key,restore_keys,version}` gets back `{ok, signed_download_url,
-  matched_key}` on a hit, `{ok:false}` on a miss. `signed_download_url` points at this shim's own
-  `/download/<id>` proxy, not a bare CircleCI/S3 URL -- see below for why.
-
-Each RPC is translated into a call against CircleCI's own `$runner_host/api/v2/output/cache-save`
-/ `cache-restore`, authenticated with the per-job task token read once, at this shim's own
-startup, from `/tmp/circleci-ts.sock` (a plain, no-HTTP-framing unix socket that just writes
-`{"token":...,"runner_host":...}` on connect and closes -- discovered live, confirmed against
-`CircleCITestOrg/docker-agent-tester`'s own minimal Go reader for the same socket). Absence of
-that socket is a fatal, clearly-messaged startup error, not a silent no-op -- self-hosted runners
-or future CircleCI changes may not have it.
-
-### The real upload/download contract, and how the old "known gap" was closed
-
-An earlier version of this shim read `cache-save`'s response as a presigned-PUT-style ticket and
-POSTed the archive bytes straight to `$runner_host/<location>`. Every construction of that
-404'd, repeatedly, across many real pipeline runs (`POST`/`PUT`/`GET`/`HEAD`/`OPTIONS`, with and
-without the `.tar.zst` suffix, with the path prefixed under `/api/v2/output/`,
-`/api/v2/storage/`, `/api/v2/task/storage/` -- all 404). The 404s were real; the diagnosis was
-wrong. `location` was never a route on `runner_host` at all.
-
-Read directly from CircleCI's own `circleci/output` (the server behind `runner.circleci.com`) and
-`circleci/task-agent-subcommand-cache` (a real, independent production consumer of the identical
-API, used today for Bazel/Gradle/Xcode-CAS/Turborepo caching) source, then confirmed live against
-this shim's own CI job:
-
-- `GET {runner_host}/api/v2/output/config` (bearer = task token) returns, on real CircleCI SaaS:
-  ```json
-  {"type":"s3","endpoint":"","region":"us-east-1","bucket":"circleci-tasks-prod", ...}
-  ```
-  `type` is always `"s3"` on SaaS (a `"pre-signed"` mode exists in the server's own code but is
-  documented there as enterprise-only).
-- `GET {runner_host}/api/v2/output/credentials?provider=s3` (same bearer) returns short-lived
-  (~15 minutes, observed live) per-task AWS STS credentials, scoped by IAM policy to this task's
-  own storage prefixes only:
-  ```json
-  {"s3":{"AccessKeyID":"...","SecretAccessKey":"...","SessionToken":"...","Expires":"..."}}
-  ```
-- The cache-save ticket's `location` (e.g. `storage/caches/<projectID>/<key>.tar.zst`) is a raw
-  **S3 object key** in the bucket from `config` -- not a URL fragment. The real upload is a
-  normal, SigV4-signed S3 `PutObject` using the credentials above, with the ticket's `tags` sent
-  as the `x-amz-tagging` header (an S3 lifecycle/retention hint, not a general metadata channel).
-  Download is symmetric: `cache-restore`'s `location` is the same kind of key, fetched with a
-  SigV4-signed S3 `GetObject`.
-
-`cache_shim_server.py` implements AWS Signature Version 4 from scratch --
-`_sigv4_authorization()`, `_s3_put_object()`, `_s3_get_object()` -- using only stdlib `hmac`/
-`hashlib`, no boto3/botocore, matching this shim's existing zero-extra-install constraint. Because
-`actions/cache`'s real Azure `BlockBlobClient` can't present AWS credentials of its own, the
-upload path stays a *local* proxy exactly as before (`/upload/<id>`, this shim's own
-request-token auth) -- what changed is what happens when that local proxy commits: a real, signed
-S3 `PutObject` instead of a plain unsigned POST to `runner_host`. Download works the same way in
-reverse: `GetCacheEntryDownloadURL` hands back a URL at this shim's own `/download/<id>`, which
-performs the signed S3 `GetObject` itself and streams the bytes back -- `actions/cache` never
-needs to see (or sign for) an S3 URL directly.
-
-`actions/cache` still treats a save failure as a non-fatal warning and a restore miss as
-`undefined` (cold build) -- unchanged, and still the right safety net for what this shim can't
-yet handle (a job long enough to outlive the ~15-minute STS credential window during a single
-huge upload; each S3 call fetches fresh credentials rather than caching them, which bounds but
-does not eliminate that risk).
-
-### Security notes
-
-Same discipline `act/oidc-shim` was fixed to have after a real security review caught it
-discarding its own auth header (see that section above) -- applied here from the start:
-
-- **Binds `0.0.0.0` by default, deliberately.** Act's spawned action container is a sibling of
-  whatever process starts this shim, in its own network namespace; a loopback-only bind would be
-  unreachable from it (the same measured Docker topology `act/oidc-shim`'s own README documents in
-  detail applies unchanged here).
-- **The real auth boundary is a per-job request token**, generated fresh with
-  `secrets.token_urlsafe(32)`, checked with `hmac.compare_digest` (constant-time) on every
-  request. It arrives on Twirp RPCs for free as `Authorization: Bearer <token>` (this shim tells
-  `actions/cache` its own `ACTIONS_RUNTIME_TOKEN` *is* this token), and is additionally embedded
-  as a `token=` query parameter on both the `signed_upload_url` AND `signed_download_url` this
-  shim hands back, because real Azure block-blob semantics send no bearer header on the upload
-  PUTs (and `actions/cache`'s own plain-GET download client sends no bearer header either) --
-  without that query-param check, a wide bind would leave both proxy endpoints genuinely
-  unauthenticated.
-- **This shim's own AWS credentials never reach the wrapped action.** The STS credentials from
-  `/api/v2/output/credentials` are used only inside this process, to sign the S3
-  `PutObject`/`GetObject` calls `/upload/<id>`'s commit and `/download/<id>` make -- they are never
-  written to a response body, a log line, or `$BASH_ENV`.
-- `/healthz` stays unauthenticated by design but returns nothing beyond a static
-  `{"status":"ok"}`.
-- Neither the per-job request token, the CircleCI task token from `/tmp/circleci-ts.sock`, nor the
-  AWS STS credentials from `/api/v2/output/credentials` are ever written to this process's own
-  logs.
+**Security, in brief:** binds `0.0.0.0` deliberately, because Act's spawned action container is a
+network-namespace sibling of whatever process starts this shim, not loopback-reachable from it.
+The real auth boundary is a per-job token (`secrets.token_urlsafe(32)`, checked constant-time),
+carried both as a Twirp bearer header and as a `token=` query parameter on the upload/download
+proxy URLs -- real Azure block-blob PUTs and `actions/cache`'s plain-GET downloads send no bearer
+header, so the query param is what actually gates those endpoints. This shim's own AWS STS
+credentials never leave the process (no response body, log line, or `$BASH_ENV`). Full reasoning:
+[`docs/CACHE-SHIM.md`](docs/CACHE-SHIM.md#security-notes).
 
 ## OIDC token issuance for wrapped Actions
 
@@ -534,9 +437,9 @@ orb's -- no orb-side flag substitutes for it:
    actual CircleCI org/project the same way you would have scoped it to a specific GitHub
    repo/branch.
 3. **Set `audience-allowlist`** on `act/oidc-shim` to the audience your cloud provider expects
-   (`sts.amazonaws.com` for AWS). This is defense in depth, not the real security boundary (see
-   Security notes below) -- but it does mean a misconfigured or malicious caller in the same job
-   can't mint a token for an audience you never intended to hand out.
+   (`sts.amazonaws.com` for AWS). This is defense in depth, not the real security boundary -- but
+   it does mean a misconfigured or malicious caller in the same job can't mint a token for an
+   audience you never intended to hand out.
 
 None of this is new CircleCI capability invented for this shim -- `circleci run oidc get` and the
 always-injected `CIRCLE_OIDC_TOKEN`/`CIRCLE_OIDC_TOKEN_V2` env vars already exist for exactly this
@@ -545,46 +448,15 @@ GitHub-shaped *request contract* (a GET against `ACTIONS_ID_TOKEN_REQUEST_URL` w
 `audience` query param and a bearer token, reading back `{"value": "<jwt>"}` -- verified directly
 against `actions/toolkit`'s `oidc-utils.ts` source, not guessed) with that real token.
 
-### What's proven, and what isn't
+### Evidence and security detail
 
-The request/response contract, auth enforcement, and every documented failure path (missing
-token, unknown audience, the CircleCI CLI missing from `PATH`, a hung mint call) are proven
-locally against the real, shipped script: `test/oidc-shim/run_tests.sh` drives
-`src/scripts/oidc-shim-start.sh` (not a copy) with a fake `circleci` binary and a client that
-reproduces `actions/toolkit`'s exact request shape -- run it yourself:
-`bash test/oidc-shim/run_tests.sh`. What is **not yet exercised in this orb's own live CI** the
-way `act/cache-shim` and the artifact server are (`test_cache_shim`/`test_artifacts` in
-`.circleci/test-deploy.yml`): an end-to-end run of `act/oidc-shim` feeding a real `act/act`
-invocation against a live `circleci run oidc get`. The protocol-level reasoning is sound and
-verified against upstream source, but until that live-CI job exists, treat "proven locally" and
-"proven end to end on real CircleCI infra" as the honest, separate claims they are -- exactly the
-same distinction the cache shim's own README section draws for itself.
-
-### Security notes
-
-Same discipline `act/cache-shim` was built with from the start, because this shim was fixed to
-have it after its own security review caught it discarding its own auth header early in
-development:
-
-- **Binds `0.0.0.0` by default, deliberately.** Act's spawned action container is a sibling of
-  whatever process starts this shim, in its own network namespace; a loopback-only bind would be
-  unreachable from it -- measured directly on real CircleCI infra (a `docker` executor +
-  `setup_remote_docker` job whose container bound `0.0.0.0` answered its own loopback fine, but a
-  sibling container on the default bridge network could not reach it at all; only a sibling
-  started with `--network host` could).
-- **The real auth boundary is a per-job request token**, generated fresh with
-  `secrets.token_urlsafe(32)`, checked with `hmac.compare_digest` (constant-time) on every
-  request. It arrives for free as the `Authorization: Bearer <token>` header
-  `actions/toolkit`'s own OIDC client already sends (this shim tells the action its
-  `ACTIONS_ID_TOKEN_REQUEST_TOKEN` *is* this token) -- network position is not the security
-  boundary here, since the bind can't be narrowed to loopback.
-- **`audience-allowlist` is defense in depth only**, layered on top of the per-job token above,
-  not a substitute for it: an unauthenticated request is rejected before the audience is even
-  looked at, so a caller that can't present the token can never reach the allowlist check or
-  trigger a real mint call.
-- `/healthz` stays unauthenticated by design but returns nothing beyond a static
-  `{"status": "ok"}`.
-- The minted JWT and the per-job request token are never written to this process's own logs.
+`test_oidc_shim` in `.circleci/test-deploy.yml` proves the shim's real request/response contract,
+its auth-gate rejection of missing/wrong bearer tokens, and a real mint through `circleci run oidc
+get`, in this orb's own live CI, the same way `test_cache_shim` does for `act/cache-shim`. What it
+doesn't yet prove is a full `act/act` run of a wrapped Action actually consuming the token inside
+Act's container. The complete evidence trail and the shim's security model (binds `0.0.0.0`
+deliberately, per-job constant-time-checked token as the real auth boundary, `audience-allowlist`
+as defense in depth only) are documented in [`docs/OIDC-SHIM.md`](docs/OIDC-SHIM.md).
 
 ## Artifacts
 
@@ -756,7 +628,7 @@ one of these directly instead of the aggregate.
 | `restore-cli` | command | Restores the cached Act binary (arch + resolved version key -- `"latest"` is resolved to a concrete tag first, see [Caching](#caching)). |
 | `cache-cli` | command | Saves the Act binary to cache after a successful install. |
 | `create-env-var-secret-files` | command | Snapshots the job's entire environment (`env -0`) into `.env`/`.secrets`/`.vars`, splitting by the `secrets`/`variables` allow-lists and the `github-token` seam. This is the seam every shim (`oidc-shim`, `cache-shim`) rides for free -- see [How it fits together](#how-it-fits-together). |
-| `create-workflow-file` | command | Generates a one-action GitHub workflow YAML file from `uses`/`with`/`env`/`services`/`outputs`. Skipped entirely when you supply your own workflow file (`skip-create-workflow-file: true`). |
+| `create-workflow-file` | command | Generates a one-action GitHub workflow YAML file from `uses`/`with`/`env`/`services`/`outputs`. Skipped entirely when you supply your own workflow file (`skip-create-workflow-file: true`). Its own parameter is named `action`, not `uses` -- `act`/`act` (job/command) map `uses` onto it for you. |
 | `run-act` | command | Restores/saves the actions and Docker-image caches (`restore-actions`/`restore-image` before, `cache-actions`/`cache-image` after) around the actual `act` CLI invocation, then runs `collect-outputs` if `outputs` is set. The lowest-level command that actually invokes `act` -- see the Quick Start's note on when to call this instead of `act`. |
 | `restore-actions` | command | Restores Act's downloaded-actions cache (`~/.cache/act`). |
 | `cache-actions` | command | Saves Act's downloaded-actions cache after a run. |
@@ -819,7 +691,46 @@ list if this table and that page ever drift.
 | `bin-dir` | string | `/home/circleci/bin` | Where the Act binary is installed. |
 | `skip-install` | boolean | `false` | Skip installing Act entirely (assume it's already on `PATH`). |
 | `skip-create-env-var-secret-files` | boolean | `false` | Skip generating the env/secret/var files. |
-| `step-name` | string | `Run Act` | Name of the step that actually invokes `act`. |
+| `step-name` *(command only)* | string | `Run Act` | Name of the step that actually invokes `act`. Not exposed on the `act` job. |
+
+### `cache-shim` parameters
+
+| Parameter | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Kill switch -- `false` starts no server and exports no env vars, so it can be toggled via a pipeline parameter without removing the step. |
+| `port` | integer | `8991` | TCP port the shim listens on. Change only if it collides with something else in the same job (e.g. `oidc-shim`'s own `8990`). |
+| `bind-host` | string | `0.0.0.0` | Socket bind address, deliberately not loopback-only -- see [Security notes](#actions-cache-shim) above. |
+| `advertise-host` | string | `auto` | Address written into `ACTIONS_RESULTS_URL`. `auto` detects the Docker bridge gateway, then the job's own container bridge IP under `setup_remote_docker`, then a last-resort host IP with a warning. |
+| `task-socket` | string | `/tmp/circleci-ts.sock` | CircleCI's task-token unix socket, read once at startup for the bearer token and `runner_host`. Missing socket is a fatal, clearly-messaged error. |
+| `startup-timeout` | integer | `10` | Max seconds to wait for the shim to report healthy before failing the step. |
+| `runner-timeout` | integer | `30` | Max seconds per call to CircleCI's cache-save/cache-restore API before giving up on that request. |
+| `state-dir` | string | `/tmp/.cache-shim` | Directory for the generated server script, its log, and its pidfile. |
+| `step-name` | string | `Start Actions cache shim` | Name of the step that starts the shim. |
+
+### `oidc-shim` parameters
+
+| Parameter | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Kill switch -- `false` starts no server and exports no env vars. |
+| `port` | integer | `8990` | TCP port the shim listens on. Change only if it collides with something else in the same job. |
+| `bind-host` | string | `0.0.0.0` | Socket bind address, deliberately not loopback-only -- see [Security notes](#oidc-token-issuance-for-wrapped-actions) above. |
+| `advertise-host` | string | `auto` | Address written into `ACTIONS_ID_TOKEN_REQUEST_URL`. Same auto-detection order as `cache-shim`'s `advertise-host`. |
+| `audience-allowlist` | string | `""` | Comma-separated exact-match allowed `aud` values. Empty allows any audience. Defense in depth only -- see [The one-time cloud-side setup](#the-one-time-cloud-side-setup). |
+| `startup-timeout` | integer | `10` | Max seconds to wait for the shim to report healthy before failing the step. |
+| `mint-timeout` | integer | `20` | Max seconds to wait for one `circleci run oidc get` call before answering with a 500. Other concurrent requests are unaffected. |
+| `circleci-bin` | string | `circleci` | Name/path of the job-runtime CircleCI CLI to shell out to (baked into CircleCI's executor images -- not the laptop orb-authoring CLI). |
+| `state-dir` | string | `/tmp/.oidc-shim` | Directory for the generated server script, its log, and its pidfile. |
+| `step-name` | string | `Start OIDC shim` | Name of the step that starts the shim. |
+
+### `gha-compile` / `gha-render-job` parameters
+
+| Parameter | Command(s) | Type | Default | What it does |
+|---|---|---|---|---|
+| `workflow-file` | both | string | `.github/workflows/ci.yml` | Path (relative to the checked-out repo) to the GitHub Actions workflow file. |
+| `job` | `gha-render-job` | string | `""` (required) | The GitHub Actions job id to render. |
+| `out` | both | string | `/tmp/generated-config.yml` (compile) / `/tmp/rendered-job.yml` (render-job) | Path to write the generated config / rendered single-job workflow file to. |
+| `bin-dir` | both | string | `/home/circleci/bin` | Where `ghac` is installed (via `install-ghac`, called automatically). |
+| `self-hosted-namespace` | both | string | `""` | Your CircleCI runner namespace -- only needed if the workflow uses `runs-on: self-hosted` anywhere. Must be passed identically to `gha-compile` and every `gha-render-job` call for the same workflow file. Left empty, any self-hosted `runs-on:` is a compile error naming why. See [`docs/GHAC-COMPILER-REFERENCE.md`](docs/GHAC-COMPILER-REFERENCE.md) for the resource-class naming convention. |
 
 ### Reach for the granular commands instead of `act` when...
 
@@ -897,6 +808,7 @@ workflows:
 - **GitHub-native security-tab integrations have no destination.** `github/codeql-action` and any
   action whose entire purpose is uploading into GitHub's own Code Scanning/Dependabot/Secret
   Scanning UI cannot work off-GitHub -- there is no equivalent surface to upload into, full stop.
+
 See [Scope](#scope-one-action-per-jobcommand-invocation) above for the one-action-per-call
 boundary itself and the compiler's role as the deliberate, larger-scoped escape hatch from it --
 not repeated here since it isn't a limitation so much as this orb's own design boundary.
@@ -915,10 +827,9 @@ does correctly.
 `needs.<job>.outputs.<name>` form of cross-job data flow), plus `strategy.matrix` (a real CircleCI
 `matrix:` job) and `runs-on: self-hosted` (a real CircleCI self-hosted runner resource class).**
 Nothing about this is silently ignored -- every construct that isn't one of the specific supported
-shapes below is **rejected by name**, with the exact unsupported construct quoted in the error, at
+shapes above is **rejected by name**, with the exact unsupported construct quoted in the error, at
 compile time. A workflow either compiles into something this orb has verified will run, or it
-fails loudly telling you exactly which line stopped it. See `tools/ghac/README.md` for the full
-design writeup and how the prototype's real-CLI, real-`act` validation was done.
+fails loudly telling you exactly which line stopped it.
 
 ### How it's wired
 
@@ -937,45 +848,12 @@ design writeup and how the prototype's real-CLI, real-`act` validation was done.
 
 ### What's supported, what's rejected, what's delegated
 
-"Delegated" means Act resolves that construct itself, from the real, unmodified workflow file --
-correctly, because it's Act's own job to do so, not something this compiler reimplements.
-
-| Construct | Outcome |
-|---|---|
-| `runs-on:` (single string, in the built-in mapping table: `ubuntu-latest`/`ubuntu-22.04`/`ubuntu-24.04`) | **Supported** -- mapped to a CircleCI `machine:` executor + `act --platform` image |
-| `runs-on:` (unmapped label, e.g. a custom name that isn't self-hosted) | **Rejected by name** |
-| `runs-on: self-hosted` / `runs-on: [self-hosted, linux, x64]` (or other recognized labels) | **Supported** -- mapped to a CircleCI self-hosted runner `resource_class` once a runner namespace is configured (`--self-hosted-namespace`); see `tools/ghac/README.md`/`internal/compile/runson.go` for the exact naming convention your resource classes need to follow. **This is a migration selling point, not a limitation** -- your existing self-hosted jobs run on CircleCI runners. |
-| `runs-on: [self-hosted, windows]` / `[self-hosted, macos]` / an unrecognized extra label | **Rejected by name** -- act needs a Linux Docker host regardless of which machine the runner is; an unrecognized label has nothing to map to and isn't guessed at |
-| `runs-on: self-hosted` with no `--self-hosted-namespace` configured | **Rejected by name** -- there's no way to derive a resource class without knowing your organization's runner namespace |
-| `runs-on: windows-latest` / `macos-latest` | **Rejected by name** -- explicit reason (Act/CircleCI executor mismatch) |
-| `runs-on: ${{ matrix.* }}` (matrix-driven runs-on) | **Rejected by name** -- a fixed runs-on label is required even when `strategy.matrix` is used elsewhere in the job |
-| `needs:` (string or list) | **Supported** -- becomes `requires:` (expanded to include any `strategy.matrix.include`-added job invocations too, see below) |
-| `if: github.ref == 'refs/heads/X'` / `'refs/tags/X'` | **Supported** -- becomes `filters:` |
-| `if: github.ref_name == 'X'` | **Supported** (treated as a branch name) |
-| `if: startsWith(github.ref, 'refs/heads/'|'refs/tags/')` | **Supported** |
-| `if:` (any other expression) | **Rejected by name** -- the raw expression text is quoted in the error |
-| Step-level `if:` | **Delegated** |
-| `jobs.<job>.outputs.<name>: ${{ steps.X.outputs.Y }}` | **Supported** -- captured via a synthetic step, wired through workspace |
-| `jobs.<job>.outputs.<name>` (literal value, or any other expression shape) | **Rejected by name** |
-| `${{ needs.<job>.outputs.<name> }}` (exact whole expression) | **Supported** -- rewritten to `${{ env.* }}`, threaded through `persist_to_workspace`/`attach_workspace` |
-| `${{ needs.<job>.result }}` / `needs.*` combined with other operators or inside a function call | **Rejected by name** -- the expression-language wall; see `tools/ghac/README.md` |
-| `strategy.matrix` (plain cross-product, e.g. `os: [...]`, `version: [...]`) | **Supported** -- becomes a real CircleCI `matrix:` job invocation (the generated job is parameterized; each matrix key becomes a job parameter) |
-| `${{ matrix.<key> }}` (exact whole expression, in that job's own steps/env) | **Supported** -- rewritten to `${{ env.CCI_MATRIX_<KEY> }}`, set from `<< parameters.<key> >>` at CircleCI job runtime |
-| `matrix.*` combined with other operators or inside a function call | **Rejected by name** |
-| `strategy.matrix.exclude` | **Supported** -- fully expanded into exact combinations and passed to CircleCI's own `matrix.exclude` |
-| `strategy.matrix.include` (entry specifies exactly the base matrix's own keys, adding one new combination) | **Supported** -- becomes a separate, explicit, non-matrix job invocation calling the same parameterized job |
-| `strategy.matrix.include` (entry omits a base matrix key, or adds a key not already in the matrix) | **Rejected by name** -- GitHub's semantics there widen/augment existing cells, and this compiler won't guess which |
-| `strategy.matrix` combined with `outputs:` on the same job | **Rejected by name** -- GitHub itself only exposes the last-finishing matrix cell for `needs.<job>.outputs.*`, an ordering-dependent result this compiler won't reproduce |
-| `strategy.fail-fast` | **Accepted as a documented no-op** -- CircleCI runs every matrix cell to completion independently; it does not cancel sibling matrix jobs on a failure. Noted in the generated config's comments, not silently dropped |
-| `strategy.max-parallel` | **Rejected by name** -- CircleCI has no per-matrix concurrency cap (same reason workflow-level `concurrency:` below is out of scope) |
-| `services:` (job-level) | **Rejected by name** |
-| `uses:` (job calls a reusable workflow) | **Rejected by name** |
-| `permissions:` / `concurrency:` (workflow- or job-level) | **Rejected by name** |
-| `environment:` (job-level deployment environments) | **Rejected by name** |
-| `on:` (workflow trigger config) | **Not translated, by design** -- CircleCI's own pipeline triggers (in the setup config you commit) decide when the pipeline runs; documented here rather than left as a silent no-op |
-| `env:` / `defaults:` / `container:` (workflow-, job-, step-level) | **Delegated** |
-| `uses:`/`with:`/`run:`/`id:`/`name:`/`shell:`/`timeout-minutes:`/`continue-on-error:` (step-level) | **Delegated** |
-| Any other `${{ }}` expression not mentioning `needs.*`/`matrix.*` (`github.*`, `secrets.*`, `vars.*`, `env.*`, `inputs.*`, same-job `steps.*.outputs.*`) | **Delegated** |
+The complete, construct-by-construct table -- every `runs-on:` shape, every `if:` form, the
+`strategy.matrix`/`matrix.include`/`matrix.exclude` handling, and everything delegated straight to
+Act -- lives in [`docs/GHAC-COMPILER-REFERENCE.md`](docs/GHAC-COMPILER-REFERENCE.md), along with
+the exact resource-class naming convention `self-hosted-namespace` requires. See
+`tools/ghac/README.md` for the full design writeup and how the prototype's real-CLI, real-`act`
+validation was done.
 
 ## Legal / compliance
 
@@ -999,33 +877,24 @@ complete, honest history of what changed since.
 
 ## Resources
 
-[CircleCI Orb Registry Page](https://circleci.com/developer/orbs/orb/cci-labs/act) - The official registry page of this orb for all versions, executors, commands, and jobs described.
+- [CircleCI Orb Registry Page](https://circleci.com/developer/orbs/orb/cci-labs/act) -- the official registry page of this orb for all versions, executors, commands, and jobs described.
+- [CircleCI Orb Docs](https://circleci.com/docs/orb-intro/#section=configuration) -- docs for using, creating, and publishing CircleCI Orbs.
 
-[CircleCI Orb Docs](https://circleci.com/docs/orb-intro/#section=configuration) - Docs for using, creating, and publishing CircleCI Orbs.
+**Deep dives**, for the detail this README pushes out of the way by default:
+
+- [`docs/CACHE-SHIM.md`](docs/CACHE-SHIM.md) -- the cache shim's full protocol translation, the SigV4 S3 contract, and its security model.
+- [`docs/OIDC-SHIM.md`](docs/OIDC-SHIM.md) -- the OIDC shim's evidence trail and security model.
+- [`docs/GHAC-COMPILER-REFERENCE.md`](docs/GHAC-COMPILER-REFERENCE.md) -- the compiler's complete construct-by-construct support table.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) -- larger items deliberately scoped out of past passes, with the reasoning recorded.
 
 ## Examples
 
-For the most up to date examples, please visit the the Orb Registry's [usage examples](https://circleci.com/developer/orbs/orb/cci-labs/act#usage-examples).
-
-### Run a GitHub Action Using Act
-```yaml
-  version: 2.1
-  orbs:
-    act: circleci/act@x.y.z
-  workflows:
-    main:
-      jobs:
-        - act/act:
-            name: "Hello World Javascript Action"
-            uses: actions/hello-world-javascript-action@v1.1
-            with: |
-              who-to-greet: "Mona the Octocat"
-            env: |
-              hello-world: "example-value"
-
-```
+For the most up to date examples, please visit the Orb Registry's [usage
+examples](https://circleci.com/developer/orbs/orb/cci-labs/act#usage-examples), or the runnable
+files under [`src/examples/`](src/examples/).
 
 ### Avoid GitHub Token Errors
+
 ```yaml
   version: 2.1
   orbs:
