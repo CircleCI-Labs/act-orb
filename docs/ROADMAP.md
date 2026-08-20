@@ -298,3 +298,35 @@ clear (e.g. staying as a narrower complement, or standing down entirely in its f
 **If someone picks this up:** check the status of CircleCI's own official GitHub Actions
 compiler/runner effort first. The right call here depends entirely on where that lands, not on
 anything technical left undone in this orb's own implementation.
+
+## 10. Caching-defaults standard (measured, 2026-08)
+
+Jim Crowley (repo owner) set a family-wide rule for every CircleCI Labs ecosystem-bridge orb
+(`act`, `bitrise`, `buildkite`, `harness`, `bitbucket-pipes`): a cache defaults to `true` where
+it's going to measurably speed up execution, paid CircleCI features included since customers can
+choose to use them, but every cache must have a way for customers to turn it off. The conditional
+is load-bearing -- "if it's going to speed up execution" is a claim that needs evidence, not an
+assumption that caching is always faster. This orb's own `cache-images` parameter was the one
+sibling parameter in the family plausibly slower with caching on (a CircleCI cache restore is
+itself a network download, on top of which this orb still pays for `docker save`/`docker load`),
+so it was the one actually measured rather than defaulted by feel.
+
+**What was measured:** real CircleCI runs (not estimates), comparing a plain registry pull against
+`cache-images`'s own cold-cache-miss and warm-cache-hit paths for the default
+`catthehacker/ubuntu:act-latest` platform image (~567MB). See
+[CAPABILITIES.md](CAPABILITIES.md#caching) for the full table and job numbers (2220-2222,
+2249-2251 on `CircleCI-Labs/act-orb`, two independent runs to check for noise -- both runs agreed
+within a few percent).
+
+**The result:** the warm-cache-hit path was 18-22% *slower* than just pulling the image, because
+`docker load`'s own cost (~12s) already exceeds the entire registry pull (~14s), before the cache
+restore step's own ~4.6s is even added. `cache-images` stays `false` -- this is the family's one
+sibling parameter where the conditional in Jim's rule is not met, by measurement rather than
+assumption, and that is exactly what the rule calls for in that case.
+
+**If this is ever revisited:** re-measure, don't re-derive from first principles -- registry
+throughput, CircleCI's cache-storage throughput, and the platform image's own size can all shift
+independently over time. If a user's own `platform` image is large enough, or their registry is
+slow/rate-limited enough (e.g. Docker Hub anonymous-pull throttling), that the balance tips the
+other way for them specifically, `cache-images: true` remains available as the opt-in it already
+is; this finding is about the *default*, not about removing the parameter.

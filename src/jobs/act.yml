@@ -172,7 +172,14 @@ parameters:
   cache-images:
     type: boolean
     default: false
-    description: Enables caching of Docker images used by Act using CircleCI caching
+    description: >
+      Enables caching of Docker images used by Act using CircleCI caching. Defaults to false,
+      measured rather than assumed: a real cache-hit round trip (restore + `docker load`) was
+      18-22% slower than just pulling the default platform image fresh, since a CircleCI cache
+      restore is itself a network download and `docker load`'s own cost alone exceeded the
+      whole registry pull. See docs/CAPABILITIES.md's "Caching" section for the measured
+      numbers and docs/ROADMAP.md's "Caching-defaults standard" item for the family-wide rule
+      this default follows.
   defaultbranch:
     type: string
     default: main
