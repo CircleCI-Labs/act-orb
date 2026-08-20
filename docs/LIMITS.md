@@ -37,6 +37,42 @@ design boundary. A larger-scoped, whole-workflow compiler that lifts this bounda
 earlier pass and is currently deferred to the `feature/translation-layer` branch; see
 [`ROADMAP.md`](ROADMAP.md) item 9.
 
+## Docker Layer Caching and Act
+
+The `default` executor's `docker_layer_caching` parameter stays `false`. DLC caches the layers a
+`docker build` produces; it is not a cache for `docker pull`. For most of what this orb runs, that
+means DLC has nothing to do: pulling the `platform` image (the default `catthehacker/ubuntu:act-latest`
+or whatever you override it to) is a `docker pull`, not a build, and that pull has its own,
+separate caching mechanism -- the `cache-images` parameter -- covered in
+[CAPABILITIES.md](CAPABILITIES.md#caching), including why it also defaults off and when to reach
+for it instead.
+
+Unlike the sibling `harness-orb`/`bitbucket-pipes-orb`, though, Act's own workload is not
+uniformly build-free -- it genuinely runs `docker build` in one real, common-enough situation:
+**a Dockerfile-based container action.** When the action passed to `uses`/`id` (or referenced by
+a workflow file you supply directly) declares `runs.using: "docker"` with an `image:` that names a
+local Dockerfile rather than a `docker://`-prefixed pre-built image reference -- e.g. a local
+`uses: ./path/to/action` whose `action.yml` points `image:` at `Dockerfile` -- Act builds that
+image itself before running the action. This is verified directly against Act's own source, not
+assumed: `execAsDocker` in `nektos/act`'s `pkg/runner/action.go` branches on whether
+`action.Runs.Image` has a `docker://` prefix. If it does, Act just runs that pre-built image
+(pulling it if needed, honoring `--pull`/`ForcePull`). If it doesn't -- the local-Dockerfile
+case -- Act derives a synthetic image tag, checks whether an image already exists locally for the
+right architecture, and if not (or if `--rebuild`/`ForceRebuild` is set) calls
+`container.NewDockerBuildExecutor` to actually build it from that Dockerfile before the action
+runs.
+
+That is a real `docker build`, and DLC is built for exactly that case: a workflow that repeatedly
+invokes a Dockerfile-based container action across jobs can genuinely see DLC speed up (or at
+least stabilize the cost of) that repeat build, the same way it would for any other `docker build`
+on CircleCI. `docker_layer_caching` still defaults to `false` here, because a Dockerfile-based
+container action is not the common case for this orb -- most actions run through `act/act` are
+JavaScript or composite actions, or already reference a pre-built `docker://` image, neither of
+which triggers a build at all. Turn `docker_layer_caching: true` on specifically when your `uses`/
+`id` (or hand-written workflow file) targets a local, Dockerfile-based container action you expect
+to invoke more than once; it is a wasted, billed cost otherwise, for exactly the same reason it's a
+wasted cost against the platform-image pull.
+
 ## Security notes
 
 **`with`/`env`/`services` are trusted, unescaped input.** This orb builds the generated workflow

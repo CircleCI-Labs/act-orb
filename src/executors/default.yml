@@ -7,7 +7,13 @@ parameters:
   docker_layer_caching:
     type: boolean
     default: false
-    description: Enables Docker layer caching during builds
+    description: >
+      Enables CircleCI's Docker Layer Caching, which caches `docker build` layer output -- not
+      `docker pull`. It does not help the default platform-image pull (see the `cache-images`
+      parameter for that instead), but it can genuinely help when a wrapped action is a
+      Dockerfile-based container action, since Act builds that image itself. Defaults to false
+      since that's not the common case here. See docs/LIMITS.md's "Docker Layer Caching and Act"
+      section for the full explanation of when to turn this on.
   resource_class:
     type: string
     default: large

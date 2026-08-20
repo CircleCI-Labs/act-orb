@@ -322,11 +322,16 @@ within a few percent).
 `docker load`'s own cost (~12s) already exceeds the entire registry pull (~14s), before the cache
 restore step's own ~4.6s is even added. `cache-images` stays `false` -- this is the family's one
 sibling parameter where the conditional in Jim's rule is not met, by measurement rather than
-assumption, and that is exactly what the rule calls for in that case.
+assumption, and that is exactly what the rule calls for in that case. This finding is about speed
+specifically, and it's worth being precise that speed is not what `cache-images` is for in the
+first place: it exists to avoid a repeated registry pull, which matters for Docker Hub's
+anonymous-pull rate limit or a slow/unreliable registry, a reliability tradeoff rather than a
+performance one. See [CAPABILITIES.md](CAPABILITIES.md#caching) for that framing in full.
 
 **If this is ever revisited:** re-measure, don't re-derive from first principles -- registry
 throughput, CircleCI's cache-storage throughput, and the platform image's own size can all shift
-independently over time. If a user's own `platform` image is large enough, or their registry is
-slow/rate-limited enough (e.g. Docker Hub anonymous-pull throttling), that the balance tips the
-other way for them specifically, `cache-images: true` remains available as the opt-in it already
-is; this finding is about the *default*, not about removing the parameter.
+independently over time. If a user's own `platform` image is large enough that the load-vs-pull
+math tips the other way, or -- the more common real trigger -- their registry is slow or
+rate-limited enough (e.g. Docker Hub anonymous-pull throttling) that reliability matters more than
+the ~18-22% speed cost, `cache-images: true` remains available as the opt-in it already is; this
+finding is about the *default*, not about removing the parameter.

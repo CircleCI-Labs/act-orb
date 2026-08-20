@@ -15,13 +15,19 @@ different artifact with a different cost/benefit tradeoff:
 | The platform Docker image | `cache-images` | **off** | a `docker save`'d tar of the platform image (see `platform`) | arch + `platform` + `cache-key-prefix` |
 | Act's own GitHub Actions cache-server storage | `cache-server-enabled` | on | `cache-server-path` (default `~/.cache/actcache`): everything a wrapped `actions/cache@v4`/`setup-*` call saved | arch + `cache-key-prefix` + CircleCI project ID + job name |
 
-`cache-images` defaults to off, and this was measured, not assumed (see the CircleCI Labs
-orb-family caching-defaults standard in [ROADMAP.md](ROADMAP.md#10-caching-defaults-standard-measured-2026-08):
-default a cache to `true` only where it's measurably faster). A CircleCI cache restore is itself a
-network download, so `cache-images` swaps a Docker Hub registry pull for a CircleCI cache pull and
-adds `docker save`/`docker load` on top -- it only wins outright when the registry, not the cache
-backend, is the bottleneck. Measured on real CircleCI (`catthehacker/ubuntu:act-latest`, ~567MB,
-two independent pipeline runs; job numbers 2220-2222 and 2249-2251 on `CircleCI-Labs/act-orb`):
+**What `cache-images` is actually for is reliability, not speed.** It replaces a repeated Docker
+Hub registry pull with a CircleCI cache pull, which matters once you're hitting Docker Hub's
+anonymous-pull rate limit, or pulling `platform` from a registry that's slow or flaky for you --
+in either of those cases, a pull that sometimes fails or throttles outright beats a pull that's
+merely a bit slower on average. It is not a speed optimization for the common case, and on speed
+alone, measured against the default platform image, it loses: `cache-images` defaults to off, and
+this was measured, not assumed (see the CircleCI Labs orb-family caching-defaults standard in
+[ROADMAP.md](ROADMAP.md#10-caching-defaults-standard-measured-2026-08): default a cache to `true`
+only where it's measurably faster). A CircleCI cache restore is itself a network download, so
+`cache-images` swaps a Docker Hub registry pull for a CircleCI cache pull and adds `docker
+save`/`docker load` on top -- on raw speed it only wins when the registry, not the cache backend,
+is the bottleneck. Measured on real CircleCI (`catthehacker/ubuntu:act-latest`, ~567MB, two
+independent pipeline runs; job numbers 2220-2222 and 2249-2251 on `CircleCI-Labs/act-orb`):
 
 | | Cold registry pull only (`cache-images: false`) | Cold cache-miss (`cache-images: true`): pull + `docker save` + cache upload | Warm cache-hit (`cache-images: true`): cache restore + `docker load` |
 |---|---|---|---|
@@ -32,10 +38,14 @@ The number that decides the default is the warm-cache-hit column against the pla
 across both runs the warm cache-hit path was **18-22% slower** than just pulling the image, because
 `docker load` alone (~12s) costs more than the entire registry pull (~14s) did, and the cache
 restore itself (~4.6s) is pure additional overhead on top. `cache-images` stays `false` by this
-measurement. Turn it on only if your own `platform` image is either unusually large relative to
-its `docker load` cost, or the registry it comes from is measurably rate-limiting or throttling you
-(e.g. Docker Hub anonymous pulls) -- neither is true for the default `catthehacker/ubuntu:act-latest`
-image against Docker Hub as measured above.
+measurement -- for a healthy, unthrottled registry, it's simply the slower path. But if you're
+seeing Docker Hub's anonymous-pull rate limit trip (a 429, or `toomanyrequests`), or your `platform`
+image's registry is measurably slow or unreliable for you, that's exactly the situation this
+parameter exists for: turn it on and trade the ~18-22% speed cost for a pull that no longer depends
+on that registry being reachable and unthrottled every single job. Neither condition is true for
+the default `catthehacker/ubuntu:act-latest` image against Docker Hub as measured above, which is
+why the default stays off -- but don't read "this is slower" as a reason to rule it out if rate
+limiting or registry flakiness is the problem you actually have.
 
 All four cache keys share the `cache-key-prefix` parameter (default `v1`) as a common prefix, so
 bumping it busts every cache dimension at once if you ever need a clean slate across all of them.
