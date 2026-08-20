@@ -158,8 +158,20 @@ fi
 # happens with no cache server reachable at all (actions/cache warns and
 # continues; not a failure). When disabled, pass --no-cache-server so Act
 # never starts one at all.
+#
+# A leading "~/" in the path is expanded to "$HOME/" here, by hand: unlike
+# CircleCI's own restore_cache/save_cache `paths:` (which do expand "~"),
+# Act's own flag parsing does not -- pkg/artifactcache.StartHandler calls
+# os.MkdirAll() on this string verbatim, so an unexpanded "~/..." silently
+# creates a literal "~" directory under Act's current working directory
+# instead of the real home directory (reproduced live: a real
+# actions/cache/save@v4 call succeeded against the server, but nothing
+# showed up under the real $HOME afterward, because it was never written
+# there in the first place).
 if is_true "${ORB_VAL_CACHE_SERVER_ENABLED:-true}"; then
-    act_cmd+=(--cache-server-path "${ORB_VAL_CACHE_SERVER_PATH:-$HOME/.cache/actcache}")
+    cache_server_path="${ORB_VAL_CACHE_SERVER_PATH:-$HOME/.cache/actcache}"
+    cache_server_path="${cache_server_path/#\~/$HOME}"
+    act_cmd+=(--cache-server-path "${cache_server_path}")
     if [ -n "${ORB_VAL_CACHE_SERVER_ADDR:-}" ]; then
         act_cmd+=(--cache-server-addr "${ORB_VAL_CACHE_SERVER_ADDR}")
     fi
