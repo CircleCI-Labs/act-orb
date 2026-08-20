@@ -76,6 +76,17 @@ always-current, exhaustive list if this table and that page ever drift.
 | `skip-create-env-var-secret-files` | boolean | `false` | Skip generating the env/secret/var files. |
 | `step-name` *(command only)* | string | `Run Act` | Name of the step that actually invokes `act`. Not exposed on the `act` job. |
 
+## `default` executor parameters
+
+The `act/default` executor is a thin wrapper over CircleCI's own `machine` executor. These mirror the
+native keys of the same name.
+
+| Parameter | Type | Default | What it does |
+|---|---|---|---|
+| `image` | string | `ubuntu-2404:current` | The machine image the executor runs on. |
+| `docker_layer_caching` | boolean | `false` | Enables Docker layer caching. This is a paid CircleCI feature and is billed per job, so it stays off unless you ask for it. |
+| `resource_class` | string | `large` | The resource class for the executor. Act builds container images, so the default is deliberately larger than CircleCI's own `medium` default. |
+
 ## Reach for the granular commands instead of `act` when...
 
 - **You're chaining multiple actions in one job.** Each layer reads/writes plain files with no
