@@ -1,0 +1,35 @@
+description: |
+  Give a wrapped GitHub Action a real, CircleCI-signed OIDC token so
+  `aws-actions/configure-aws-credentials` (or anything else calling
+  `core.getIDToken()`) can assume an AWS IAM role -- Act itself never
+  implements GitHub's own OIDC issuance. Run `act/oidc-shim` as a step
+  before `act/act`/`act/run-act` in the same job; no other wiring needed.
+  Requires: an AWS IAM OIDC identity provider registered for
+  `https://oidc.circleci.com/org/<your-org-id>` and a role trust policy
+  matching your job's claims -- see the README's "OIDC token issuance for
+  wrapped Actions" section for the exact one-time setup.
+
+usage:
+  version: 2.1
+  orbs:
+    act: circleci/act@x.y.z
+  jobs:
+    assume_aws_role_from_action:
+      docker:
+        - image: cimg/base:current
+      steps:
+        - setup_remote_docker
+        - act/oidc-shim:
+            audience-allowlist: "sts.amazonaws.com"
+        - act/act:
+            uses: aws-actions/configure-aws-credentials@v4
+            with: |
+              role-to-assume: arn:aws:iam::123456789012:role/gha-bridge-example
+              aws-region: us-east-1
+        - run:
+            name: Use the assumed role natively
+            command: aws sts get-caller-identity
+  workflows:
+    main:
+      jobs:
+        - assume_aws_role_from_action

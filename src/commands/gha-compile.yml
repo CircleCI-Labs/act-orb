@@ -1,0 +1,57 @@
+description: |
+  Compile a GitHub Actions workflow file into a CircleCI config, using the
+  `ghac` compiler (see tools/ghac/README.md and the main README's "GitHub
+  Actions workflow compiler" section for what it supports and what it
+  rejects by name). Intended for the one job in a `setup: true` pipeline:
+  install this command's output as the `configuration_path` of a
+  `continuation/continue` step (see `src/examples/compile_github_workflow.yml`
+  for a complete, runnable setup config). Each job the compiled config
+  produces is expected to call `gha-render-job` (below) followed by
+  `act/act` with `skip-create-workflow-file: true` -- this command does not
+  generate those per-job files itself, only the top-level config that wires
+  them together.
+
+  This command, `gha-render-job`, and `install-ghac` are new, independently
+  invoked entry points; using them has zero effect on `act/act`,
+  `run-act`, or any other existing command or job in this orb.
+
+parameters:
+  workflow-file:
+    type: string
+    default: ".github/workflows/ci.yml"
+    description: Path (relative to the checked-out repo) to the GitHub Actions workflow file to compile
+  out:
+    type: string
+    default: "/tmp/generated-config.yml"
+    description: Path to write the generated CircleCI config to
+  bin-dir:
+    type: string
+    default: "/home/circleci/bin"
+    description: The directory where ghac should be installed
+  self-hosted-namespace:
+    type: string
+    default: ""
+    description: >
+      Only needed if the workflow uses `runs-on: self-hosted` (bare, or with
+      extra labels like `[self-hosted, linux, x64]`) anywhere. Your CircleCI
+      runner namespace -- self-hosted runs-on compiles to
+      `resource_class: <this>/<labels-minus-self-hosted-and-linux, sorted,
+      dash-joined>` (or `<this>/self-hosted` for bare self-hosted); see
+      tools/ghac/README.md and internal/compile/runson.go's
+      ResolveSelfHostedRunsOn for the exact naming convention your
+      organization's runner resource classes need to follow. Left empty,
+      any self-hosted runs-on in the workflow is a compile error naming why.
+      If used, `gha-render-job` (below) must be called with the SAME value
+      for every job in this workflow, not just the self-hosted ones.
+
+steps:
+  - install-ghac:
+      bin-dir: <<parameters.bin-dir>>
+  - run:
+      name: "ghac compile: << parameters.workflow-file >>"
+      environment:
+        ORB_VAL_WORKFLOW_FILE: <<parameters.workflow-file>>
+        ORB_VAL_OUT: <<parameters.out>>
+        ORB_VAL_BIN_DIR: <<parameters.bin-dir>>
+        ORB_VAL_SELF_HOSTED_NAMESPACE: <<parameters.self-hosted-namespace>>
+      command: <<include(scripts/gha-compile.sh)>>
