@@ -252,6 +252,15 @@ jobs:
           with: |
             path: LICENSE
             key: act-cache-server-durable-hit-<< pipeline.number >>
+          # A pipeline-unique cache-key-prefix, not the default "v1", so this orb's own
+          # CircleCI-side save_cache (persisting Act's cache-server storage directory across
+          # jobs) always gets a fresh key here. save_cache keys are immutable -- reusing "v1"
+          # across pipeline runs means a run where the save leg failed for any reason (e.g. the
+          # cache server was never actually reached) permanently poisons that exact key with an
+          # empty save, and every later run silently "skips" saving because a cache under that
+          # key already exists, hiding a real regression instead of catching it. Reproduced live
+          # exactly this way.
+          cache-key-prefix: test-act-cache-server-<< pipeline.number >>
           force-install: false
           debug: true
       - run:
@@ -292,6 +301,8 @@ jobs:
           with: |
             path: LICENSE
             key: act-cache-server-durable-hit-<< pipeline.number >>
+          # Must match the save job's own cache-key-prefix -- see its comment above.
+          cache-key-prefix: test-act-cache-server-<< pipeline.number >>
           force-install: false
           debug: true
       - run:
