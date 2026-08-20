@@ -31,6 +31,62 @@ jobs:
           name: shfmt (shell formatting)
           command: shfmt -i 4 -ci -sr -d src/scripts/*.sh
 
+  # ---------------------------------------------------------------------
+  # TEMPORARY measurement jobs for the cache-images caching-default review
+  # (see docs/ROADMAP.md's caching-defaults entry once landed). These do
+  # NOT use the act orb itself -- they replicate cache-image.yml/
+  # restore-image.yml's exact steps (docker save/load, the same cache-key
+  # shape) directly, so the timings are apples-to-apples with what the
+  # orb's cache-images parameter actually does, without paying for a full
+  # orb pack/inject cycle on every measurement iteration. Remove this
+  # workflow and these three jobs before merging any default change to
+  # main; they exist only to produce the A/B/C numbers on this branch.
+  # ---------------------------------------------------------------------
+  measure-a-cold-pull:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    steps:
+      - run:
+          name: "A: cold registry pull (cache-images=false)"
+          command: |
+            echo "Image present before pull? (expect: none)"
+            docker images catthehacker/ubuntu:act-latest
+            time docker pull catthehacker/ubuntu:act-latest
+  measure-b-cache-miss:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    steps:
+      - run:
+          name: "B: pull image (cache-images=true, cold/cache-miss path)"
+          command: |
+            time docker pull catthehacker/ubuntu:act-latest
+      - run:
+          name: "B: docker save"
+          command: |
+            time docker save --output /tmp/act-images.tar catthehacker/ubuntu:act-latest
+            ls -lh /tmp/act-images.tar
+      - save_cache:
+          name: "B: cache upload"
+          key: measure-{{ .Environment.CIRCLE_WORKFLOW_ID }}-act-cache-images-{{ arch }}-ubuntu-latest=catthehacker/ubuntu:act-latest
+          paths:
+            - /tmp/act-images.tar
+  measure-c-cache-hit:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    steps:
+      - restore_cache:
+          name: "C: cache restore"
+          keys:
+            - measure-{{ .Environment.CIRCLE_WORKFLOW_ID }}-act-cache-images-{{ arch }}-ubuntu-latest=catthehacker/ubuntu:act-latest
+      - run:
+          name: "C: docker load"
+          command: |
+            ls -lh /tmp/act-images.tar
+            time docker load --input /tmp/act-images.tar
+
 workflows:
   lint-pack:
     jobs:
@@ -57,3 +113,16 @@ workflows:
           orb_name: act
           requires: [orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check, shfmt-check]
           filters: *filters
+
+  # TEMPORARY: measurement-only workflow for the cache-images caching-default
+  # review. Independent of lint-pack above -- does not touch orb-tools/pack's
+  # requires. Remove before merging any resulting default change to main.
+  measure-cache-images:
+    jobs:
+      - measure-a-cold-pull:
+          filters: *filters
+      - measure-b-cache-miss:
+          filters: *filters
+      - measure-c-cache-hit:
+          filters: *filters
+          requires: [measure-b-cache-miss]
