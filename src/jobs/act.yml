@@ -232,6 +232,26 @@ parameters:
     type: string
     default: ""
     description: Port Act's artifact server listens on. Only meaningful when `artifact-server-path` is set.
+  cache-server-enabled:
+    type: boolean
+    default: true
+    description: >
+      Persist Act's own built-in GitHub Actions cache server storage across jobs via native
+      restore_cache/save_cache (true, the default), or disable Act's cache server entirely with
+      --no-cache-server (false). See `run-act`'s own parameter description and the README's
+      "Caching" section.
+  cache-server-path:
+    type: string
+    default: "~/.cache/actcache"
+    description: Directory Act's own built-in cache server persists to. Only meaningful when `cache-server-enabled` is true.
+  cache-server-addr:
+    type: string
+    default: ""
+    description: Address Act's own cache server advertises. Empty leaves Act's own auto-detection in place; see the README's "Caching" section.
+  cache-server-port:
+    type: string
+    default: ""
+    description: Port Act's own cache server listens on. Empty leaves Act's own default in place.
   skip-install:
     type: boolean
     default: false
@@ -302,6 +322,10 @@ steps:
       artifact-server-path: << parameters.artifact-server-path >>
       artifact-server-addr: << parameters.artifact-server-addr >>
       artifact-server-port: << parameters.artifact-server-port >>
+      cache-server-enabled: << parameters.cache-server-enabled >>
+      cache-server-path: << parameters.cache-server-path >>
+      cache-server-addr: << parameters.cache-server-addr >>
+      cache-server-port: << parameters.cache-server-port >>
       skip-install: << parameters.skip-install >>
       skip-create-env-var-secret-files: << parameters.skip-create-env-var-secret-files >>
       skip-create-workflow-file: << parameters.skip-create-workflow-file >>

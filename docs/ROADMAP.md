@@ -7,46 +7,37 @@ living only in a chat transcript or a PR description that ages out.
 None of the items below are secretly half-built. If you pick one up, treat this as the starting
 brief, not a patch to apply.
 
-## 1. Actions-cache-service shim (`ACTIONS_CACHE_URL`/`ACTIONS_RESULTS_URL`) -- STATUS UPDATE (2026-08): built, protocol proven, save-persistence gap real and documented
+## 1. Actions-cache-service shim (`ACTIONS_CACHE_URL`/`ACTIONS_RESULTS_URL`) -- STATUS UPDATE (2026-08): built, then removed in favor of Act's own built-in cache server
 
-This item was picked up in a later pass (family-parity work vs. `buildkite-gha`). What follows is
-that pass's own record, kept alongside the original entry above for history.
+This item went through three stages, each worth recording:
 
-**What shipped:** `act/cache-shim` (`src/commands/cache-shim.yml`, `src/scripts/
-cache_shim_server.py` + `cache-shim-start.sh`) -- a real, ~500-line Twirp-protocol
-translation server, not a stub. It implements `CreateCacheEntry`/`FinalizeCacheEntryUpload`/
-`GetCacheEntryDownloadURL`, the real Azure block-blob chunked-upload wire format (including
-correct reassembly of out-of-order blocks, verified with `uploadConcurrency`-style concurrent
-sends in `test/cache-shim/run_tests.py`), and the same wide-bind-plus-per-job-token security
-posture `act/oidc-shim` was fixed to have after its own security review. See the README's
-[Actions cache shim](../README.md#actions-cache-shim) section for the full design.
+**Stage 1 (family-parity pass vs. `buildkite-gha`):** a real, ~500-line Twirp-protocol
+translation server (`act/cache-shim`) was built against CircleCI's runner API. Protocol
+negotiation, auth enforcement, and Azure block-blob upload/download reassembly were proven, both
+in a local test suite and against real CircleCI infrastructure. A durable, cross-run save was
+initially *not* provable through the endpoint this pass tried.
 
-**What is proven, with evidence, and what is not:**
-- Twirp negotiation, auth enforcement, and block reassembly: proven, both locally (18/18 in
-  `test/cache-shim/run_tests.py` against a correct fake backend) and against the real CircleCI
-  runner API in this orb's own CI (`test_cache_shim`).
-- A durable, cross-run cache **hit**: **not proven.** `$runner_host/api/v2/output/cache-save`
-  returns a `{"method","location","tags"}` ticket, not a presigned URL, and every construction of
-  an actual upload target from that ticket 404s when tried from a real job -- tested exhaustively
-  (bare location, every plausible path-prefix combination, the older now-dead
-  `/api/v2/task/storage/cache-save` endpoint, an inline-content field, generic upload-endpoint
-  guesses, `OPTIONS` probing) across many separate real pipeline runs. See the README's "The
-  known, real gap" subsection for the complete, reproduced evidence trail. The working hypothesis:
-  a plain job's task-token scope is metadata-only for this endpoint; the real object-storage
-  channel belongs to CircleCI's own runner-agent process, not something a job step can reach.
+**Stage 2 (a later pass):** the save-persistence gap was closed for real -- a working
+SigV4-signed direct S3 upload/download leg was implemented and proven end to end, including a
+durable, cross-job cache hit (two separate jobs, two separate shim processes, byte-identical
+restore).
 
-**Why this wasn't fully closed this pass:** the mission that produced this shim was told
-`circleci/task-agent-subcommand-cache` already does this successfully for Bazel/Gradle/Turborepo
-caching -- but that repo's source was not reachable from the sandbox this work was done in.
-Reading it is very likely the fastest path to the actual answer (the correct way to redeem a
-`cache-save` ticket, or the actual endpoint/channel real cache bytes move through) -- faster than
-more trial-and-error probing against production.
+**Stage 3 (this pass, translation-layer split, 2026-08):** the shim was removed outright, not
+because it stopped working, but because it depended on internal, unblessed-for-customer-use APIs
+that are still actively changing underneath it -- a real maintenance and support-boundary risk
+for a public orb, independent of whether the protocol translation itself was correct. It was also
+discovered to be unnecessary: **Act already ships its own built-in GitHub Actions cache server**
+(`pkg/artifactcache`, on by default since Act v0.2.45), and a real, unmodified `actions/cache@v4`
+proves a real cache hit against it with zero orb-side protocol translation. This orb now exposes
+that server's own `--cache-server-path`/`--cache-server-addr`/`--cache-server-port` as
+parameters and persists its storage directory across jobs via native
+`restore_cache`/`save_cache` -- see the README's "Caching" section for the design and its one
+honest tradeoff (one native cache key per job covers the whole directory).
 
-**If someone picks this up:** read `task-agent-subcommand-cache`'s own upload-redemption code
-first. If it truly uses `/api/v2/output/cache-save` the same way this shim does, the missing piece
-is almost certainly either (a) a header/field this pass didn't try, or (b) evidence the real
-channel is not public HTTP at all, in which case the honest scope of this shim is "restore-only,
-formally" and the README should say so even more plainly than it already does.
+**If someone ever revisits a from-scratch protocol shim instead:** the removed shim's source is
+still reachable in git history (`feature/translation-layer` was cut from main just before this
+removal, so it still carries that snapshot) -- but see the reasoning above for why native Act
+cache-server support is very likely the better answer regardless.
 
 ## 2. Artifact-service shim (native `store_artifacts` interception) -- STATUS UPDATE (2026-08): built, much smaller than originally scoped
 
@@ -158,22 +149,31 @@ inherited, not presented as solved.
 already has the primitive -- it's a design/API-shape question, not a build-a-protocol-server
 question like #1/#2 above.
 
-## 4. OIDC token shimming
+## 4. OIDC token shimming -- STATUS UPDATE (2026-08): built and sound, deferred to a feature branch for the first public release
 
 **What it would do:** let an action that calls `core.getIDToken()` / reads
 `ACTIONS_ID_TOKEN_REQUEST_URL` get a token instead of erroring outright (Act does not implement
 GitHub's OIDC signer at all today: [nektos/act#2500](https://github.com/nektos/act/issues/2500),
 [nektos/act#2262](https://github.com/nektos/act/issues/2262)).
 
-**Why it's deferred:** shimmable at the *protocol* level (CircleCI has its own OIDC issuer and
-could serve a CircleCI-signed token in GitHub's env-var contract) but not at the *trust-policy*
-level -- the cloud-side IAM trust policy (AWS/Azure/GCP/Vault) has to be reconfigured to trust
-CircleCI's issuer and claim shape instead of GitHub's, which is a customer-side change no orb can
-paper over. This wasn't raised as urgent for this pass and the customer-side prerequisite means
-"flag and defer" is the right call regardless of orb-side effort.
+**Why it was originally deferred:** shimmable at the *protocol* level (CircleCI has its own OIDC
+issuer and could serve a CircleCI-signed token in GitHub's env-var contract) but not at the
+*trust-policy* level -- the cloud-side IAM trust policy (AWS/Azure/GCP/Vault) has to be
+reconfigured to trust CircleCI's issuer and claim shape instead of GitHub's, which is a
+customer-side change no orb can paper over.
 
-**What shipped instead:** the README's OIDC/`GITHUB_TOKEN` limitations section states this
-plainly rather than silently doing nothing with no explanation.
+**What actually shipped (a later pass):** a real OIDC-token shim (`act/oidc-shim`) was built and
+exercised against real CircleCI infrastructure -- a real command, a real mint through the
+job-runtime CLI, and a real auth-gate rejection of missing/wrong bearer tokens, all proven in this
+orb's own CI. Unlike the cache shim above, it is built entirely on documented, public CircleCI
+features (`circleci run oidc get`, the already-injected `CIRCLE_OIDC_TOKEN`/
+`CIRCLE_OIDC_TOKEN_V2`), not on internal or unblessed APIs.
+
+**Why it's deferred again, this pass (translation-layer split, 2026-08):** not because it's
+unsound -- it's a ~310-line local HTTP server, and a real design/security surface Jim wants
+reviewed on its own before it ships in the first public version of this orb, not bundled in
+alongside everything else. It moves to `feature/translation-layer` intact and can come back on
+its own schedule.
 
 ## 5. shfmt verification
 
@@ -267,3 +267,25 @@ pointing `github-token` at its name is the entire integration step required on t
 `CreateAndStoreTokenForPipeline`-minted token into a job's environment, and deciding the trust
 boundary/scoping UX for who can request one for a given pipeline) -- not here. Once that exists,
 this orb needs no further change; `github-token` already does its half of the job.
+
+## 9. GitHub Actions workflow compiler -- deferred to a feature branch, not because it's broken
+
+**What it does:** `install-ghac`/`gha-compile`/`gha-render-job` compile a whole, real, multi-job
+`.github/workflows/*.yml` file into a wired-together CircleCI config -- a larger-scoped escape
+hatch on top of this orb's core one-action-per-step scope, described in an earlier revision of
+this README/roadmap in detail.
+
+**Why it's deferred, this pass (translation-layer split, 2026-08):** CircleCI's own engineering
+org is independently building an official GitHub Actions workflow compiler plus its own Actions
+runner as a first-party platform feature. Shipping a second, unofficial compiler in this public
+orb at the same time would compete with that effort and confuse customers about which path is the
+supported, forward-looking one -- not a technical problem with the compiler itself, which passed
+its own test suite (unit tests plus real-CLI `config validate` round-trips) before this move.
+
+**What shipped instead:** the compiler moves to `feature/translation-layer` intact, to be
+revisited once the platform's own official path exists and this orb's role relative to it is
+clear (e.g. staying as a narrower complement, or standing down entirely in its favor).
+
+**If someone picks this up:** check the status of CircleCI's own official GitHub Actions
+compiler/runner effort first -- the right call here depends entirely on where that lands, not on
+anything technical left undone in this orb's own implementation.

@@ -9,25 +9,25 @@ set -uo pipefail
 # fragment, not a standalone executable -- no shebang, hence the shellcheck
 # directive above instead.
 #
-# SINGLE SOURCE OF TRUTH for this function. install.sh, run-act.sh,
-# cache-shim-start.sh, and oidc-shim-start.sh each embed a mechanically
-# generated, byte-identical copy of this file's body between "BEGIN
-# GENERATED: is_true" / "END GENERATED: is_true" markers -- regenerate all
-# four with `bash src/scripts/sync-embedded-is-true.sh` any time this file
-# changes.
+# SINGLE SOURCE OF TRUTH for this function. install.sh and run-act.sh each
+# embed a mechanically generated, byte-identical copy of this file's body
+# between "BEGIN GENERATED: is_true" / "END GENERATED: is_true" markers --
+# regenerate both with `bash src/scripts/sync-embedded-is-true.sh` any time
+# this file changes. (Two more embedded copies, in cache-shim-start.sh and
+# oidc-shim-start.sh, existed here until the cache/OIDC shims were split
+# onto feature/translation-layer and the cache shim was removed outright;
+# that branch still carries its own copy of this same generator for those
+# two files.)
 #
 # Why embedded copies rather than a plain `<<include(scripts/lib/is_true.sh)>>`
 # in each command's `command:` field: that was tried first and reverted --
 # the circleci-cli baked into orb-tools/pack's own Docker image rejects more
 # than one <<include(...)>> directive in a single YAML scalar, and each of
-# these four commands' `command:` field already has one include for its own
-# main script (see git history for the reproduced real-CI pack failure: "An
-# unexpected error occurred: multiple include statements"). This mirrors the
-# generate-and-embed pattern this repo already uses for the two embedded
-# Python shim servers (cache_shim_server.py/oidc_shim_server.py -- see
-# sync-embedded-cache-server.sh/sync-embedded-oidc-server.sh); test_is_true_no_drift
+# these commands' `command:` field already has one include for its own main
+# script (see git history for the reproduced real-CI pack failure: "An
+# unexpected error occurred: multiple include statements"). test_is_true_no_drift
 # in .circleci/test-deploy.yml is the real, working drift check for this one
-# (regenerates all four from this file and asserts `git diff` is clean).
+# (regenerates both from this file and asserts `git diff` is clean).
 is_true() {
     case "${1:-}" in
         1 | true | TRUE | True) return 0 ;;
@@ -145,6 +145,29 @@ if [ -n "${ORB_VAL_ARTIFACT_SERVER_PATH:-}" ]; then
     if [ -n "${ORB_VAL_ARTIFACT_SERVER_PORT:-}" ]; then
         act_cmd+=(--artifact-server-port "${ORB_VAL_ARTIFACT_SERVER_PORT}")
     fi
+fi
+
+# Act already ships its own built-in GitHub Actions cache server
+# (pkg/artifactcache) and starts it automatically unless told not to. When
+# enabled (the default), pass --cache-server-path explicitly so this orb's
+# own restore-actcache/cache-actcache steps (run around this script by
+# run-act.yml) and Act itself agree on exactly where its storage lives, so
+# it can be persisted across jobs via native restore_cache/save_cache --
+# see the README's "Caching" section for the one documented tradeoff (one
+# native cache key per job covers the whole directory) and for what
+# happens with no cache server reachable at all (actions/cache warns and
+# continues; not a failure). When disabled, pass --no-cache-server so Act
+# never starts one at all.
+if is_true "${ORB_VAL_CACHE_SERVER_ENABLED:-true}"; then
+    act_cmd+=(--cache-server-path "${ORB_VAL_CACHE_SERVER_PATH:-$HOME/.cache/actcache}")
+    if [ -n "${ORB_VAL_CACHE_SERVER_ADDR:-}" ]; then
+        act_cmd+=(--cache-server-addr "${ORB_VAL_CACHE_SERVER_ADDR}")
+    fi
+    if [ -n "${ORB_VAL_CACHE_SERVER_PORT:-}" ]; then
+        act_cmd+=(--cache-server-port "${ORB_VAL_CACHE_SERVER_PORT}")
+    fi
+else
+    act_cmd+=(--no-cache-server)
 fi
 
 # Include additional flags if provided. `additional-act-flags` is the one

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Regenerates the embedded copies of is_true() in install.sh, run-act.sh,
-# cache-shim-start.sh, and oidc-shim-start.sh from the single canonical
-# source file, src/scripts/lib/is_true.sh. Mirrors this repo's own
-# sync-embedded-cache-server.sh/sync-embedded-oidc-server.sh -- see
-# lib/is_true.sh's own comment for why this is a generate-and-embed step
-# rather than a plain <<include(...)>> (a real orb-tools/pack constraint,
-# reproduced on real CI).
+# Regenerates the embedded copies of is_true() in install.sh and run-act.sh
+# from the single canonical source file, src/scripts/lib/is_true.sh. Two
+# more embedded copies (cache-shim-start.sh, oidc-shim-start.sh) existed
+# here until the cache/OIDC shims were split onto feature/translation-layer
+# and the cache shim was removed outright -- see lib/is_true.sh's own
+# comment for why this is a generate-and-embed step rather than a plain
+# <<include(...)>> (a real orb-tools/pack constraint, reproduced on real
+# CI).
 #
 # Usage: bash src/scripts/sync-embedded-is-true.sh
 set -euo pipefail
@@ -24,8 +25,6 @@ MARKER_END='^# END GENERATED: is_true$'
 TARGETS=(
     "${HERE}/install.sh"
     "${HERE}/run-act.sh"
-    "${HERE}/cache-shim-start.sh"
-    "${HERE}/oidc-shim-start.sh"
 )
 
 for target in "${TARGETS[@]}"; do

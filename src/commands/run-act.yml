@@ -166,6 +166,47 @@ parameters:
     type: string
     default: v1
     description: Prefixes a string to the all cache keys
+  cache-server-enabled:
+    type: boolean
+    default: true
+    description: >
+      Act already ships its own built-in GitHub Actions cache server (`pkg/artifactcache`) and
+      starts it automatically unless told not to -- a real, unmodified `actions/cache@v4` inside
+      the wrapped action talks to it with no orb-side protocol translation at all. This parameter
+      controls whether *this orb* also persists that server's storage directory
+      (`cache-server-path`) across jobs via native `restore_cache`/`save_cache` (true, the
+      default) or disables Act's server entirely by passing `--no-cache-server` (false). It does
+      NOT control whether Act's cache server itself runs when this parameter is true -- that
+      always happens by Act's own default; setting `cache-server-path` merely tells Act (and this
+      orb) where its storage lives so it can be cached. See the README's "Caching" section for the
+      one documented tradeoff (one native cache key per job covers the whole directory) and for
+      what happens with no cache server reachable at all (`actions/cache` warns and continues,
+      verified behavior in `actions/toolkit`, not a failure).
+  cache-server-path:
+    type: string
+    default: "~/.cache/actcache"
+    description: >
+      Directory Act's own built-in cache server persists to (`--cache-server-path`). Defaults to
+      Act's own CLI default, so setting this explicitly changes nothing about Act's behavior --
+      it only gives this orb a known, stable path to `restore_cache`/`save_cache` around. Only
+      meaningful when `cache-server-enabled` is true.
+  cache-server-addr:
+    type: string
+    default: ""
+    description: >
+      Address Act's own cache server advertises to the wrapped action (`--cache-server-addr`).
+      Empty (the default) leaves Act's own auto-detection of an outbound IP in place, which is
+      expected to work on a real CircleCI container but was observed to pick the wrong interface
+      (a VPN adapter) on at least one developer machine, requiring this to be set explicitly
+      alongside `--network host` there. Only meaningful when `cache-server-enabled` is true --
+      see the README's "Caching" section for when to set this.
+  cache-server-port:
+    type: string
+    default: ""
+    description: >
+      Port Act's own cache server listens on (`--cache-server-port`). Empty (the default) leaves
+      Act's own default (a randomly assigned free port) in place. Only meaningful when
+      `cache-server-enabled` is true.
   step-name:
     type: string
     default: Run Act
@@ -182,6 +223,12 @@ steps:
       steps:
         - restore-image:
             platform: <<parameters.platform>>
+            cache-key-prefix: <<parameters.cache-key-prefix>>
+  - when:
+      condition: << parameters.cache-server-enabled >>
+      steps:
+        - restore-actcache:
+            cache-server-path: <<parameters.cache-server-path>>
             cache-key-prefix: <<parameters.cache-key-prefix>>
   - run:
       name: << parameters.step-name >>
@@ -210,6 +257,10 @@ steps:
         ORB_VAL_ARTIFACT_SERVER_PATH: <<parameters.artifact-server-path>>
         ORB_VAL_ARTIFACT_SERVER_ADDR: <<parameters.artifact-server-addr>>
         ORB_VAL_ARTIFACT_SERVER_PORT: <<parameters.artifact-server-port>>
+        ORB_VAL_CACHE_SERVER_ENABLED: <<parameters.cache-server-enabled>>
+        ORB_VAL_CACHE_SERVER_PATH: <<parameters.cache-server-path>>
+        ORB_VAL_CACHE_SERVER_ADDR: <<parameters.cache-server-addr>>
+        ORB_VAL_CACHE_SERVER_PORT: <<parameters.cache-server-port>>
         ORB_VAL_OUTPUTS: <<parameters.outputs>>
         ORB_VAL_OUTPUTS_FILE: <<parameters.outputs-file>>
       command: <<include(scripts/run-act.sh)>>
@@ -232,4 +283,10 @@ steps:
       steps:
         - cache-image:
             platform: <<parameters.platform>>
+            cache-key-prefix: <<parameters.cache-key-prefix>>
+  - when:
+      condition: << parameters.cache-server-enabled >>
+      steps:
+        - cache-actcache:
+            cache-server-path: <<parameters.cache-server-path>>
             cache-key-prefix: <<parameters.cache-key-prefix>>

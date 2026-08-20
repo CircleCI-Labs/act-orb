@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# Fake CircleCI job-runtime CLI that always fails, for exercising the
-# shim's non-zero-exit -> HTTP 500 (with stderr included) failure path.
-set -euo pipefail
-echo "fake circleci (bin-fail): simulated mint failure: rate limited by fake upstream" >&2
-exit 1

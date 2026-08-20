@@ -1,0 +1,23 @@
+description: >
+  Save Act's own built-in GitHub Actions cache-server directory (`--cache-server-path`) so a
+  later job's `restore-actcache` can restore it -- see that command's own description for the
+  full rationale and its one documented tradeoff.
+
+parameters:
+  cache-server-path:
+    type: string
+    default: "~/.cache/actcache"
+    description: >
+      Directory Act's own built-in cache server persists to -- must match the same-named
+      parameter passed to `run-act`/`act`/`jobs/act`.
+  cache-key-prefix:
+    type: string
+    default: v1
+    description: Prefixes a string to the all cache keys
+
+steps:
+  - save_cache:
+      name: Saving cache for Act's own GitHub Actions cache server...
+      key: << parameters.cache-key-prefix >>-act-cache-server-{{ arch }}-{{ .Environment.CIRCLE_PROJECT_ID }}-{{ .Environment.CIRCLE_JOB }}
+      paths:
+        - << parameters.cache-server-path >>

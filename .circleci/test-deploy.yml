@@ -40,8 +40,8 @@ jobs:
   # lands in $BASH_ENV as a plain shell variable, not just that the job
   # exits zero.
   # Uses the `machine` executor (this orb's own documented default -- see
-  # src/executors/default.yml and the test_cache_shim job's own comment
-  # below), NOT docker+setup_remote_docker: setup_remote_docker gives you a
+  # src/executors/default.yml and the test_act_cache_server_durable_hit_save
+  # job's own comment below), NOT docker+setup_remote_docker: setup_remote_docker gives you a
   # REMOTE Docker daemon that cannot see this job container's own
   # filesystem, so --bind (a volume mount, enabled by default) silently
   # shares nothing, and the outputs handoff file Act writes inside its
@@ -53,7 +53,9 @@ jobs:
   # ./.act-orb-outputs.env -- nothing to collect" -- i.e. the file that
   # step needed was never shared back across the remote-daemon boundary.
   # Switching to `machine` (a real local Docker daemon `--bind` can actually
-  # share with) is this same fix already proven for test_cache_shim et al.
+  # share with) is this same fix already proven for other jobs in this file
+  # that also rely on --bind (e.g. test_act_cache_server_durable_hit_save/
+  # restore below).
   test_output_capture:
     machine:
       image: ubuntu-2204:current
@@ -179,488 +181,6 @@ jobs:
               exit 1
             fi
             echo "OK: github-token seam aliased correctly and did not leak the source var"
-  # Integration coverage for the GitHub Actions workflow compiler (ghac):
-  # compiles a real multi-job, needs:-chained GitHub workflow fixture into a
-  # CircleCI config, then validates that config against the real CLI --
-  # proving the setup-workflow half of the feature (act/gha-compile) end to
-  # end, not just that ghac's own unit tests pass in isolation.
-  test_gha_compile:
-    docker:
-      - image: cimg/base:current
-    steps:
-      - checkout
-      - act/gha-compile:
-          workflow-file: tools/ghac/fixtures/02-needs-chain.yml
-          out: /tmp/generated-config.yml
-      - run:
-          name: Install CircleCI CLI
-          command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
-      - run:
-          name: Validate the generated config against the real CLI
-          command: circleci config validate --config /tmp/generated-config.yml
-  # Integration coverage for the per-job half (act/gha-render-job + act/act's
-  # existing skip-create-workflow-file escape hatch): renders one job out of
-  # a fixture GitHub workflow and actually executes it with a real `act`,
-  # proving the runtime path a gha-compile-generated pipeline's own jobs
-  # would follow -- not just that the rendered file happens to validate.
-  test_gha_render_and_run:
-    docker:
-      - image: cimg/base:current
-    steps:
-      - checkout
-      - setup_remote_docker
-      - act/gha-render-job:
-          workflow-file: test/gha-compile-fixture/sample-workflow.yml
-          job: hello
-          out: /tmp/rendered-job.yml
-      - run:
-          name: Sanity check the rendered file before handing it to act
-          command: |
-            if [ ! -s /tmp/rendered-job.yml ]; then
-              echo "Expected a non-empty rendered job file at /tmp/rendered-job.yml" >&2
-              exit 1
-            fi
-            grep -q "run: echo" /tmp/rendered-job.yml
-      - act/act:
-          skip-create-workflow-file: true
-          workflow-file: /tmp/rendered-job.yml
-          job: hello
-          force-install: false
-          debug: true
-  # Integration coverage for strategy.matrix -> CircleCI matrix (added for
-  # family parity with buildkite-gha): compiles a 2x2 matrix fixture and
-  # asserts the generated config contains a real matrix: stanza, then
-  # validates it against the real CLI end to end -- proving the compiler
-  # output is actually acceptable CircleCI config, not just well-formed YAML.
-  #
-  # Also compiles+validates 12-matrix-exclude.yml (a two-key matrix with an
-  # exclude: entry) in the same job: this is the regression coverage for a
-  # real bug found in render.go's exclude: rendering (a two-or-more-key
-  # exclude entry rendered its second key one indentation depth too deep,
-  # which `circleci config validate` rejected but `ghac compile` itself did
-  # not -- exiting 0 with a broken config). 08-matrix-2x2.yml alone can't
-  # catch this: it has no exclude: at all. The Go-level unit tests
-  # (TestMatrixExcludeRenderText, internal/compile/compile_test.go) cover the
-  # same case without a real CLI; this step is what proves the fix against
-  # the actual CircleCI config parser, end to end, in CI.
-  test_gha_compile_matrix:
-    docker:
-      - image: cimg/base:current
-    steps:
-      - checkout
-      - act/gha-compile:
-          workflow-file: tools/ghac/fixtures/08-matrix-2x2.yml
-          out: /tmp/generated-matrix-config.yml
-      - run:
-          name: "Sanity check the matrix: stanza is actually present"
-          command: |
-            grep -q "matrix:" /tmp/generated-matrix-config.yml
-            grep -q "parameters:" /tmp/generated-matrix-config.yml
-      - act/gha-compile:
-          workflow-file: tools/ghac/fixtures/12-matrix-exclude.yml
-          out: /tmp/generated-matrix-exclude-config.yml
-      - run:
-          name: "Sanity check the exclude: block is actually present"
-          command: |
-            grep -q "exclude:" /tmp/generated-matrix-exclude-config.yml
-      - run:
-          name: Install CircleCI CLI
-          command: curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/master/install.sh | bash
-      - run:
-          name: Validate the generated matrix config against the real CLI
-          command: circleci config validate --config /tmp/generated-matrix-config.yml
-      - run:
-          name: Validate the generated matrix+exclude config against the real CLI
-          command: circleci config validate --config /tmp/generated-matrix-exclude-config.yml
-  # Integration coverage for runs-on: self-hosted -> CircleCI self-hosted
-  # runner resource classes (added for family parity). Deliberately does NOT
-  # run `circleci config validate` here: the generated config's own
-  # `act/gha-render-job` step passes --self-hosted-namespace, a command
-  # parameter that only exists once THIS branch's own `Publish Dev` step
-  # (later in this same workflow) has republished cci-labs/act@dev:... --
-  # validating that against the registry here would be a same-run
-  # chicken-and-egg failure on the very first run after this parameter was
-  # added. Asserting the compiled resource_class/machine shape by grepping
-  # gha-compile's own output still proves the --self-hosted-namespace flag
-  # round-trips correctly through the orb command -> script -> ghac binary
-  # in a real CircleCI job.
-  test_gha_compile_self_hosted:
-    docker:
-      - image: cimg/base:current
-    steps:
-      - checkout
-      - act/gha-compile:
-          workflow-file: tools/ghac/fixtures/11-self-hosted-runner.yml
-          out: /tmp/generated-self-hosted-config.yml
-          self-hosted-namespace: acme
-      - run:
-          name: Sanity check the self-hosted resource_class/machine shape
-          command: |
-            grep -q "machine: true" /tmp/generated-self-hosted-config.yml
-            grep -q "resource_class: acme/linux-x64" /tmp/generated-self-hosted-config.yml
-
-  # Real integration coverage for the Actions-cache shim (added for family
-  # parity with buildkite-gha's own cache support). Runs the shim against
-  # the REAL, live CircleCI runner API in an actual job, drives an actual
-  # `actions/cache/save@v4` then `actions/cache/restore@v4` through act/act
-  # in the SAME job, and asserts the shim's own protocol translation AND the
-  # real, SigV4-signed S3 upload/download leg both actually succeeded (see
-  # cache_shim_server.py's module docstring for the full contract this now
-  # implements: GET .../output/config -> GET .../output/credentials -> a
-  # real S3 PutObject/GetObject). A same-job save+restore does not by itself
-  # prove a *durable, cross-process* hit (this job's own shim process could
-  # in principle short-circuit) -- that is what
-  # test_cache_shim_durable_hit_save/restore below exist to prove, as two
-  # separate jobs with two separate shim processes and two separate sets of
-  # STS credentials.
-  # Uses the `machine` executor (this orb's own documented default -- see
-  # src/executors/default.yml), NOT docker+setup_remote_docker, for a real,
-  # measured reason: setup_remote_docker gives you a REMOTE Docker daemon
-  # that cannot see this job container's own filesystem at all, so `--bind`
-  # (a volume mount) silently shares nothing. Confirmed live: caching even
-  # this repo's own already-committed LICENSE file failed with "No files
-  # were found with the provided path: LICENSE" under setup_remote_docker;
-  # switching to `machine` (a real local Docker daemon) fixed it immediately
-  # with no other change. This was confirmed to be the same root cause of the
-  # once pre-existing test_output_capture/test_stale_outputs_guard failures
-  # (both also relied on `--bind` under docker+setup_remote_docker) -- see
-  # those jobs' own comments above for the confirming log evidence; they were
-  # switched to `machine` too and now pass.
-  test_cache_shim:
-    machine:
-      image: ubuntu-2204:current
-    steps:
-      - checkout
-      - act/cache-shim
-      - act/act:
-          # checkout: false -- we already checked out once above.
-          checkout: false
-          uses: actions/cache/save@v4
-          with: |
-            path: LICENSE
-            key: cache-shim-test-<< pipeline.number >>
-          force-install: false
-          debug: true
-      - act/act:
-          checkout: false
-          uses: actions/cache/restore@v4
-          with: |
-            path: LICENSE
-            key: cache-shim-test-<< pipeline.number >>
-          force-install: false
-          debug: true
-      - run:
-          name: Assert the shim's own negotiation AND the real S3 upload/download leg both succeeded
-          command: |
-            LOG=/tmp/.cache-shim/server.log
-            if [ ! -f "$LOG" ]; then
-              echo "Expected the cache shim's own server log at $LOG -- the shim never started." >&2
-              exit 1
-            fi
-            echo "=== cache-shim server log ==="
-            cat "$LOG"
-            echo "=============================="
-            if ! grep -q 'CreateCacheEntry HTTP/1.1" 200' "$LOG"; then
-              echo "Regression: the shim never served a successful CreateCacheEntry call --" >&2
-              echo "actions/cache/save@v4 never reached the shim, or auth/negotiation broke." >&2
-              exit 1
-            fi
-            echo "OK: shim served CreateCacheEntry successfully -- protocol negotiation works."
-            if grep -q 'commit failed' "$LOG"; then
-              echo "Regression: the real S3 PutObject failed -- see cache_shim_server.py's module" >&2
-              echo "docstring for the contract this is supposed to satisfy (config -> credentials" >&2
-              echo "-> signed PutObject). This used to be an expected, documented gap; it is not" >&2
-              echo "anymore -- see the README's cache-shim section." >&2
-              exit 1
-            fi
-            if ! grep -qE 'PUT /upload/.*" 201' "$LOG"; then
-              echo "Regression: expected a 201 upload-commit response (real S3 PutObject succeeded)." >&2
-              exit 1
-            fi
-            echo "OK: the real, SigV4-signed S3 PutObject succeeded."
-            if ! grep -qE 'GET /download/.*" 200' "$LOG"; then
-              echo "Regression: expected a 200 on the download proxy (real S3 GetObject succeeded)." >&2
-              exit 1
-            fi
-            echo "OK: the real, SigV4-signed S3 GetObject succeeded."
-            echo "This job proves the shim's protocol translation AND the real upload/download leg"
-            echo "both work end to end against the live CircleCI runner API and real S3, within a"
-            echo "single job. See test_cache_shim_durable_hit_save/restore for cross-job proof."
-
-  # THE acceptance bar for closing the cache shim's upload/download gap: a
-  # DURABLE, CROSS-JOB cache hit, not just a same-job save+restore (which
-  # test_cache_shim above already covers, and which alone can't rule out
-  # some same-process shortcut). This job only SAVES a cache -- built from a
-  # value unique to this pipeline run (pipeline.number), so a stale hit from
-  # a previous run's object can't be mistaken for a fresh one -- and stops.
-  # test_cache_shim_durable_hit_restore below is a SEPARATE job (its own
-  # machine, its own act/cache-shim process, its own STS credentials fetched
-  # fresh from GET .../output/credentials) that `requires:` this one in the
-  # workflow below, so it only starts after this job's save has actually
-  # completed, then restores that exact key and diffs the bytes. The only
-  # way that restore job can produce a byte-identical file is a real round
-  # trip through CircleCI's runner API + S3 -- there is no shared local
-  # state between the two jobs' containers.
-  test_cache_shim_durable_hit_save:
-    machine:
-      image: ubuntu-2204:current
-    steps:
-      - checkout
-      - act/cache-shim
-      - act/act:
-          checkout: false
-          uses: actions/cache/save@v4
-          with: |
-            path: LICENSE
-            key: cache-shim-durable-hit-<< pipeline.number >>
-          force-install: false
-          debug: true
-      - run:
-          name: Assert the save leg's real S3 upload actually committed (not just negotiated)
-          command: |
-            LOG=/tmp/.cache-shim/server.log
-            echo "=== cache-shim server log ==="
-            cat "$LOG" 2>/dev/null || echo "(no log found)"
-            echo "=============================="
-            if ! grep -qE 'PUT /upload/.*" 201' "$LOG"; then
-              echo "FAIL: the real S3 PutObject for this durable-hit save did not commit (no 201" >&2
-              echo "on /upload/<id>) -- see cache_shim_server.py's module docstring for the" >&2
-              echo "upload contract this is supposed to satisfy." >&2
-              exit 1
-            fi
-            echo "OK: save committed via a real, SigV4-signed S3 PutObject."
-
-  # See test_cache_shim_durable_hit_save's own comment above -- this is the
-  # other half of the durable-hit proof. A fresh machine, a fresh
-  # act/cache-shim process, fresh STS credentials: the ONLY way LICENSE can
-  # come back byte-identical is a real S3 GetObject retrieving what the
-  # OTHER job's OTHER process uploaded.
-  test_cache_shim_durable_hit_restore:
-    machine:
-      image: ubuntu-2204:current
-    steps:
-      - checkout
-      - run:
-          name: Save the expected content, then delete the file so a restore is the only way it comes back
-          command: |
-            cp LICENSE /tmp/expected-license
-            rm -f LICENSE
-      - act/cache-shim
-      - act/act:
-          checkout: false
-          uses: actions/cache/restore@v4
-          with: |
-            path: LICENSE
-            key: cache-shim-durable-hit-<< pipeline.number >>
-          force-install: false
-          debug: true
-      - run:
-          name: Assert LICENSE came back with the exact original bytes -- the real durable-hit proof
-          command: |
-            LOG=/tmp/.cache-shim/server.log
-            echo "=== cache-shim server log ==="
-            cat "$LOG" 2>/dev/null || echo "(no log found)"
-            echo "=============================="
-            if [ ! -f LICENSE ]; then
-              echo "FAIL: LICENSE was not restored at all -- no durable cache hit. actions/cache" >&2
-              echo "treats a restore miss as non-fatal (build proceeds cold), which is why this" >&2
-              echo "step has to check explicitly rather than relying on act/act's own exit code." >&2
-              exit 1
-            fi
-            if ! grep -qE 'GET /download/.*" 200' "$LOG"; then
-              echo "FAIL: LICENSE exists but the shim's own log shows no successful download proxy" >&2
-              echo "GET -- unexpected; investigate before trusting this as a real hit." >&2
-              exit 1
-            fi
-            if ! diff -q /tmp/expected-license LICENSE > /dev/null; then
-              echo "FAIL: restored LICENSE does not match the original bytes -- corruption somewhere" >&2
-              echo "in the save/upload/download/restore round trip." >&2
-              diff /tmp/expected-license LICENSE >&2 || true
-              exit 1
-            fi
-            echo "OK: DURABLE CROSS-JOB CACHE HIT PROVEN. LICENSE was saved by a completely"
-            echo "separate job (separate machine, separate shim process, separate STS"
-            echo "credentials), and this job restored the exact original bytes via a real,"
-            echo "signed S3 GetObject -- not a same-process shortcut, not a coincidence."
-
-  # Real-CI coverage for the OIDC shim. Before this job, `act/oidc-shim` had
-  # NO CI coverage at all -- the only "oidc" hits in this file were inside
-  # test_is_true_no_drift, which checks the embedded is_true() helper and
-  # never starts the shim. test/oidc-shim/run_tests.sh covers the logic
-  # thoroughly (~21 assertions) but drives the raw script locally against a
-  # FAKE `circleci` binary; it cannot exercise the real job-runtime CLI, a
-  # real CircleCI-signed mint, or the already-injected
-  # CIRCLE_OIDC_TOKEN/CIRCLE_OIDC_TOKEN_V2 env vars, because none of those
-  # exist outside a real CircleCI job. This job closes exactly that gap:
-  # starts the shim via the orb's own `act/oidc-shim` command (not the raw
-  # script), requests a real token through it, and -- the most important
-  # assertion here -- proves the auth gate actually rejects both a wrong
-  # bearer token and a request with no Authorization header at all. An
-  # earlier revision of this shim generated a per-job request token and then
-  # discarded it without ever checking it (`_unused_auth_header`) -- every
-  # request, authenticated or not, got a 200 with a real minted token. A
-  # happy-path-only test would not have caught that; this job would.
-  #
-  # `machine`, not docker+setup_remote_docker -- matches this orb's
-  # documented default topology (see test_cache_shim's own comment) and
-  # gives `act/oidc-shim`'s advertise-host auto-detection a real local
-  # Docker daemon to find the bridge gateway through, exactly as it would
-  # run for a real customer using every default.
-  #
-  # The audience requested through the shim is deliberately the SAME
-  # audience already baked into $CIRCLE_OIDC_TOKEN_V2 (its own `aud` claim,
-  # decoded locally -- no network call), not a made-up string like
-  # "sts.amazonaws.com": that audience is already proven mintable for this
-  # exact job (CircleCI itself just minted a token for it to populate
-  # CIRCLE_OIDC_TOKEN_V2), so this job needs no extra reference mint call
-  # and can't fail due to some unrelated custom-claims/audience setup this
-  # project may or may not have. The one real mint call that does happen is
-  # the shim's own, through the real `circleci` job-runtime CLI, in response
-  # to an HTTP request shaped exactly like actions/toolkit's
-  # core.getIDToken() (test/oidc-shim/toolkit_client.py, reused from the
-  # local harness). The freshly minted JWT itself is never echoed to job
-  # output -- unlike $CIRCLE_OIDC_TOKEN_V2, a token minted this way is NOT
-  # automatically masked by CircleCI (see the CLI's own docs), so only
-  # derived, non-sensitive facts about it (shape, claims) are asserted and
-  # printed; see test/cache-shim/probe_output_api.py's redaction precedent
-  # in this same repo for why that matters.
-  test_oidc_shim:
-    machine:
-      image: ubuntu-2204:current
-    steps:
-      - checkout
-      - act/oidc-shim
-      - run:
-          name: Decode the default audience from the already-injected OIDC token (no mint call)
-          command: |
-            set -euo pipefail
-            SRC_TOKEN="${CIRCLE_OIDC_TOKEN_V2:-${CIRCLE_OIDC_TOKEN:-}}"
-            if [ -z "${SRC_TOKEN}" ]; then
-              echo "FAIL: neither CIRCLE_OIDC_TOKEN_V2 nor CIRCLE_OIDC_TOKEN is set in this job --" >&2
-              echo "OIDC does not appear to be enabled for this project, so this job cannot prove" >&2
-              echo "anything about a real mint call. See the README's OIDC section." >&2
-              exit 1
-            fi
-
-            # Written to a tmp file, one printf'd line at a time, rather than a
-            # `python3 -c "..."` multi-line string or a heredoc -- both trip
-            # things up here for different reasons: a heredoc's own marker
-            # characters get misread by CircleCI's pipeline-parameter
-            # substitution scanner inside a YAML block-literal `command:` (see
-            # e.g. test_collect_outputs_script's own comment above), and a
-            # multi-line double-quoted `-c` string has to sit at THIS block's
-            # own indentation to stay valid YAML, which is itself invalid
-            # Python (unexpected indent). This same decode script is reused
-            # by the next step below, unchanged, on the real minted token.
-            DECODE_AUD_PY=/tmp/oidc-shim-test-decode-aud.py
-            {
-              printf '%s\n' 'import base64, json, sys'
-              printf '%s\n' 'tok = sys.argv[1]'
-              printf '%s\n' "payload_b64 = tok.split('.')[1]"
-              printf '%s\n' "payload_b64 += '=' * (-len(payload_b64) % 4)"
-              printf '%s\n' "print(json.loads(base64.b64decode(payload_b64))['aud'])"
-            } > "${DECODE_AUD_PY}"
-
-            DEFAULT_AUD="$(python3 "${DECODE_AUD_PY}" "${SRC_TOKEN}")"
-            if [ -z "${DEFAULT_AUD}" ]; then
-              echo "FAIL: could not decode an 'aud' claim from the already-injected OIDC token." >&2
-              exit 1
-            fi
-            echo "export OIDC_TEST_DEFAULT_AUD=${DEFAULT_AUD}" >> "${BASH_ENV}"
-            echo "OK: default audience is ${DEFAULT_AUD} (this job's own org id, taken from the"
-            echo "pre-injected token's own 'aud' claim -- not a secret, just a UUID). Will ask the"
-            echo "shim to mint for this SAME audience, which is already proven mintable for this job."
-      - run:
-          name: Real command, real mint, real auth gate -- request a token and assert rejection of bad auth
-          command: |
-            set -euo pipefail
-            if [ ! -f /tmp/.oidc-shim/server.log ]; then
-              echo "FAIL: expected the real act/oidc-shim command to have started the shim (no log" >&2
-              echo "at /tmp/.oidc-shim/server.log -- its default state-dir)." >&2
-              exit 1
-            fi
-            if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-              echo "FAIL: act/oidc-shim did not export ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN to \$BASH_ENV" >&2
-              exit 1
-            fi
-            echo "OK: shim started via the real act/oidc-shim command and exported URL+TOKEN."
-            CLIENT="test/oidc-shim/toolkit_client.py"
-
-            echo "--- Negative case: absent Authorization header ---"
-            set +e
-            OUT_NOAUTH="$(python3 "${CLIENT}" "${ACTIONS_ID_TOKEN_REQUEST_URL}" "" "${OIDC_TEST_DEFAULT_AUD}" 2>&1)"
-            RC_NOAUTH=$?
-            set -e
-            echo "${OUT_NOAUTH}"
-            if [ "${RC_NOAUTH}" -eq 0 ]; then
-              echo "FAIL: a request with NO Authorization header unexpectedly succeeded (rc=0) --" >&2
-              echo "the shim minted a real token for a completely unauthenticated caller." >&2
-              exit 1
-            fi
-            case "${OUT_NOAUTH}" in
-              *"Error Code : 401"*) echo "OK: absent Authorization header -> 401" ;;
-              *)
-                echo "FAIL: absent Authorization header did not produce a 401. This is exactly the" >&2
-                echo "shape of the '_unused_auth_header' regression this job exists to catch: the" >&2
-                echo "auth check computed a result and then never gated anything on it." >&2
-                exit 1
-                ;;
-            esac
-
-            echo "--- Negative case: wrong bearer token ---"
-            set +e
-            OUT_WRONG="$(python3 "${CLIENT}" "${ACTIONS_ID_TOKEN_REQUEST_URL}" "not-the-real-token-$(date +%s)" "${OIDC_TEST_DEFAULT_AUD}" 2>&1)"
-            RC_WRONG=$?
-            set -e
-            echo "${OUT_WRONG}"
-            if [ "${RC_WRONG}" -eq 0 ]; then
-              echo "FAIL: a request with a WRONG bearer token unexpectedly succeeded (rc=0)." >&2
-              exit 1
-            fi
-            case "${OUT_WRONG}" in
-              *"Error Code : 401"*) echo "OK: wrong bearer token -> 401" ;;
-              *)
-                echo "FAIL: wrong bearer token did not produce a 401 -- see the '_unused_auth_header'" >&2
-                echo "note above; this is the real security regression this job guards against." >&2
-                exit 1
-                ;;
-            esac
-
-            if printf '%s%s' "${OUT_NOAUTH}" "${OUT_WRONG}" | grep -qF "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"; then
-              echo "FAIL: a 401 response leaked the real per-job request token." >&2
-              exit 1
-            fi
-            echo "OK: neither 401 response leaked the real per-job request token."
-
-            echo "--- Positive case: correct bearer token -- real mint through the real circleci CLI ---"
-            TOKEN="$(python3 "${CLIENT}" "${ACTIONS_ID_TOKEN_REQUEST_URL}" "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${OIDC_TEST_DEFAULT_AUD}")"
-            if [ -z "${TOKEN}" ]; then
-              echo "FAIL: the correct bearer token did not get a token back." >&2
-              exit 1
-            fi
-            case "${TOKEN}" in
-              ey*) ;;
-              *)
-                echo "FAIL: the returned value does not look like a JWT (expected it to start with 'ey')." >&2
-                exit 1
-                ;;
-            esac
-            SEGMENTS=$(($(printf '%s' "${TOKEN}" | tr -cd '.' | wc -c) + 1))
-            if [ "${SEGMENTS}" -ne 3 ]; then
-              echo "FAIL: the returned value is not a 3-segment JWT (got ${SEGMENTS} segments)." >&2
-              exit 1
-            fi
-            RETURNED_AUD="$(python3 /tmp/oidc-shim-test-decode-aud.py "${TOKEN}")"
-            if [ "${RETURNED_AUD}" != "${OIDC_TEST_DEFAULT_AUD}" ]; then
-              echo "FAIL: the minted token's aud (${RETURNED_AUD}) does not match the requested" >&2
-              echo "audience (${OIDC_TEST_DEFAULT_AUD})." >&2
-              exit 1
-            fi
-            echo "OK: a real, well-formed CircleCI OIDC token came back (correct 'aud', 3-segment"
-            echo "JWT shape), minted through the real 'circleci run oidc get' invocation the shim"
-            echo "shells out to, in response to a request shaped exactly like actions/toolkit's"
-            echo "core.getIDToken(). The JWT value itself is deliberately never printed above."
-
   # Real integration coverage for enabling Act's OWN built-in artifact
   # server (`--artifact-server-path`) -- added for family parity, and much
   # smaller than a from-scratch artifact shim would have been: Act already
@@ -669,9 +189,11 @@ jobs:
   # `actions/upload-artifact@v4` through act/act and asserts the uploaded
   # file actually lands on the CircleCI host's disk at the configured path,
   # then hands it to a native `store_artifacts` step.
-  # `machine`, not docker+setup_remote_docker -- see the test_cache_shim
-  # job's own comment above for why (remote Docker cannot see this
-  # container's filesystem, so --bind shares nothing).
+  # `machine`, not docker+setup_remote_docker: setup_remote_docker gives
+  # you a REMOTE Docker daemon that cannot see this job container's own
+  # filesystem, so --bind (a volume mount) silently shares nothing --
+  # confirmed live the same way test_output_capture's own comment above
+  # documents.
   test_artifacts:
     machine:
       image: ubuntu-2204:current
@@ -681,7 +203,7 @@ jobs:
           checkout: false
           uses: actions/upload-artifact@v4
           with: |
-            name: cache-shim-test-artifact
+            name: act-artifacts-test-artifact
             path: LICENSE
           artifact-server-path: /tmp/act-artifacts
           force-install: false
@@ -703,6 +225,96 @@ jobs:
       - store_artifacts:
           path: /tmp/act-artifacts
           destination: gha-artifacts
+
+  # Real integration coverage for act's OWN built-in GitHub Actions cache server
+  # (pkg/artifactcache, on by default -- see run-act.yml's cache-server-* parameter
+  # descriptions and the README's "Caching" section). This job only SAVES a cache -- built from
+  # a value unique to this pipeline run (pipeline.number), so a stale hit from a previous run
+  # can't be mistaken for a fresh one -- and stops.
+  # test_act_cache_server_durable_hit_restore below is a SEPARATE job (its own machine, its own
+  # freshly started act cache-server process) that `requires:` this one in the workflow below,
+  # so it only starts after this job's save has actually completed, then restores that exact key
+  # and diffs the bytes. The only way that restore job can produce a byte-identical file is a
+  # real round trip through this orb's own restore_cache/save_cache around cache-server-path --
+  # there is no shared local state between the two jobs' containers.
+  # `machine`, not docker+setup_remote_docker -- same reasoning as test_output_capture/
+  # test_artifacts above: a remote Docker daemon can't see this job container's own filesystem,
+  # and (per the README) act's cache-server address auto-detection needs a real local Docker
+  # daemon to find the bridge gateway through in the first place.
+  test_act_cache_server_durable_hit_save:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - act/act:
+          checkout: false
+          uses: actions/cache/save@v4
+          with: |
+            path: LICENSE
+            key: act-cache-server-durable-hit-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - run:
+          name: Assert the save leg actually persisted real bytes to Act's own cache-server storage
+          command: |
+            set -euo pipefail
+            CACHE_DIR="${HOME}/.cache/actcache"
+            echo "=== ${CACHE_DIR} contents ==="
+            find "${CACHE_DIR}" -type f 2>/dev/null || true
+            if ! find "${CACHE_DIR}" -type f 2>/dev/null | grep -q .; then
+              echo "FAIL: expected Act's own cache-server storage directory (${CACHE_DIR}) to" >&2
+              echo "contain at least one file after a real actions/cache/save@v4 call -- either" >&2
+              echo "the server was never reached at all (actions/cache treats that as a" >&2
+              echo "non-fatal warning, not a failure -- see the README's Caching section) or the" >&2
+              echo "default cache-server-addr auto-detection picked an address the wrapped" >&2
+              echo "action's container can't actually reach on this executor." >&2
+              exit 1
+            fi
+            echo "OK: Act's own cache server persisted real bytes to ${CACHE_DIR}."
+
+  # See test_act_cache_server_durable_hit_save's own comment above -- this is the other half of
+  # the durable-hit proof. A fresh machine and a fresh act cache-server process (restore_cache
+  # having repopulated cache-server-path from the OTHER job's save before Act ever starts): the
+  # ONLY way LICENSE can come back byte-identical is that real round trip.
+  test_act_cache_server_durable_hit_restore:
+    machine:
+      image: ubuntu-2204:current
+    steps:
+      - checkout
+      - run:
+          name: Save the expected content, then delete the file so a restore is the only way it comes back
+          command: |
+            cp LICENSE /tmp/expected-license
+            rm -f LICENSE
+      - act/act:
+          checkout: false
+          uses: actions/cache/restore@v4
+          with: |
+            path: LICENSE
+            key: act-cache-server-durable-hit-<< pipeline.number >>
+          force-install: false
+          debug: true
+      - run:
+          name: Assert LICENSE came back with the exact original bytes -- the real durable-hit proof
+          command: |
+            set -euo pipefail
+            if [ ! -f LICENSE ]; then
+              echo "FAIL: LICENSE was not restored at all -- no durable cache hit. actions/cache" >&2
+              echo "treats a restore miss as non-fatal (build proceeds cold), which is why this" >&2
+              echo "step has to check explicitly rather than relying on act/act's own exit code." >&2
+              exit 1
+            fi
+            if ! diff -q /tmp/expected-license LICENSE > /dev/null; then
+              echo "FAIL: restored LICENSE does not match the original bytes -- corruption" >&2
+              echo "somewhere in the save/persist/restore round trip." >&2
+              diff /tmp/expected-license LICENSE >&2 || true
+              exit 1
+            fi
+            echo "OK: DURABLE CROSS-JOB CACHE HIT PROVEN via Act's own built-in cache server."
+            echo "LICENSE was saved by a completely separate job (separate machine, separate Act"
+            echo "cache-server process) and this job restored the exact original bytes -- proving"
+            echo "cache-server-path really persists across jobs via this orb's own"
+            echo "restore_cache/save_cache, not a same-process shortcut or a coincidence."
 
   # Regression coverage for boolean-parameter encoding (added for family
   # parity -- see harness-orb's test_run_plugin_booleans, the audit item
@@ -1128,72 +740,35 @@ jobs:
             echo "OK: dash-sanitized key exported correctly, and a shell-metacharacter value"
             echo "round-tripped exactly without executing -- printf '%q' quoting works as designed."
 
-  # Real drift check for the two embedded Python shim servers. cache-shim-start.sh
-  # and oidc-shim-start.sh each embed a mechanically generated, byte-identical
-  # heredoc copy of cache_shim_server.py/oidc_shim_server.py (same
-  # one-script-file-per-command constraint as the is_true() consolidation
-  # below -- see that job's own comment). Both start scripts' docstrings
-  # claimed a job like this already existed and would "fail loudly" on
-  # drift; before this job, that claim was false -- there was no job, and no
-  # grep hit anywhere in .circleci/ or test/ for either sync script's name.
-  # This is live risk, not theoretical: cache_shim_server.py was rewritten
-  # for the SigV4 cache work, and a future edit to either canonical .py file
-  # that skips its sync-embedded-*-server.sh script would ship a silently
-  # stale embedded server with nothing to catch it. This job regenerates
-  # both embedded copies from their canonical sources and asserts the
-  # checked-in copies already match -- modeled directly on
-  # test_is_true_no_drift below, the same shape, proven to already work.
-  test_embedded_server_no_drift:
-    docker:
-      - image: cimg/base:current
-    steps:
-      - checkout
-      - run:
-          name: Regenerate both embedded shim-server copies and assert nothing changed
-          command: |
-            set -euo pipefail
-            bash src/scripts/sync-embedded-cache-server.sh
-            bash src/scripts/sync-embedded-oidc-server.sh
-            if ! git diff --exit-code -- src/scripts/cache-shim-start.sh src/scripts/oidc-shim-start.sh; then
-              echo "FAIL: regenerating the embedded shim-server copies from their canonical .py" >&2
-              echo "files changed cache-shim-start.sh and/or oidc-shim-start.sh above -- one of" >&2
-              echo "them was hand-edited without also running the matching" >&2
-              echo "sync-embedded-cache-server.sh/sync-embedded-oidc-server.sh script (or the" >&2
-              echo "canonical .py changed and the embedded copy was never regenerated). Run the" >&2
-              echo "appropriate sync script and commit the result." >&2
-              exit 1
-            fi
-            echo "OK: both embedded shim-server copies match their canonical .py sources exactly."
-
-  # Real drift check for the is_true() consolidation: install.sh, run-act.sh, cache-shim-start.sh,
-  # and oidc-shim-start.sh each embed a mechanically generated, byte-identical copy of
-  # src/scripts/lib/is_true.sh (a plain <<include(...)>> was tried first and reverted -- real
-  # orb-tools/pack rejects more than one include directive in a single YAML scalar, and each of
-  # these commands' `command:` field already has one for its own main script; see git history and
-  # lib/is_true.sh's own comment for the reproduced failure). This job regenerates all four from
-  # the canonical file and asserts the checked-in copies already match -- a hand-edit to any one
-  # copy that skipped the sync script fails this job loudly instead of drifting silently.
+  # Real drift check for the is_true() consolidation: install.sh and run-act.sh each embed a
+  # mechanically generated, byte-identical copy of src/scripts/lib/is_true.sh (a plain
+  # <<include(...)>> was tried first and reverted -- real orb-tools/pack rejects more than one
+  # include directive in a single YAML scalar, and each of these commands' `command:` field
+  # already has one for its own main script; see git history and lib/is_true.sh's own comment for
+  # the reproduced failure). This job regenerates both from the canonical file and asserts the
+  # checked-in copies already match -- a hand-edit to either copy that skipped the sync script
+  # fails this job loudly instead of drifting silently.
   test_is_true_no_drift:
     docker:
       - image: cimg/base:current
     steps:
       - checkout
       - run:
-          name: Regenerate all four embedded is_true() copies and assert nothing changed
+          name: Regenerate both embedded is_true() copies and assert nothing changed
           command: |
             set -euo pipefail
             bash src/scripts/sync-embedded-is-true.sh
-            if ! git diff --exit-code -- src/scripts/install.sh src/scripts/run-act.sh src/scripts/cache-shim-start.sh src/scripts/oidc-shim-start.sh; then
-              echo "FAIL: regenerating is_true() from src/scripts/lib/is_true.sh changed one or more" >&2
-              echo "of the four embedded copies above -- one of them was hand-edited without also" >&2
+            if ! git diff --exit-code -- src/scripts/install.sh src/scripts/run-act.sh; then
+              echo "FAIL: regenerating is_true() from src/scripts/lib/is_true.sh changed one or" >&2
+              echo "both of the embedded copies above -- one of them was hand-edited without also" >&2
               echo "running 'bash src/scripts/sync-embedded-is-true.sh' (or lib/is_true.sh itself" >&2
               echo "changed and the embedded copies weren't regenerated). Run that script and" >&2
               echo "commit the result." >&2
               exit 1
             fi
-            echo "OK: all four embedded is_true() copies match src/scripts/lib/is_true.sh exactly."
+            echo "OK: both embedded is_true() copies match src/scripts/lib/is_true.sh exactly."
       - run:
-          name: Sanity check each of the four call sites still accepts both boolean encodings
+          name: Sanity check each of the two call sites still accepts both boolean encodings
           command: |
             set -euo pipefail
             # A heredoc is deliberately avoided here (same reason as the
@@ -1213,7 +788,7 @@ jobs:
               printf 'done\n'
             } > "${driver}"
 
-            for f in install.sh run-act.sh cache-shim-start.sh oidc-shim-start.sh; do
+            for f in install.sh run-act.sh; do
               # Extract just the generated is_true() block and drive it directly and in isolation,
               # so this checks the EXACT function text shipped in each file, independent of that
               # file's other logic (which the more targeted per-script tests already cover).
@@ -1234,31 +809,26 @@ jobs:
                 echo "${out}" | grep -qx "${v}=false" || { echo "FAIL (${f}): '${v}' did not evaluate false" >&2; exit 1; }
               done
             done
-            echo "OK: all four call sites' is_true() accept both '1/0' and 'true/false' encodings identically."
+            echo "OK: both call sites' is_true() accept both '1/0' and 'true/false' encodings identically."
 
 workflows:
   test-deploy:
     jobs:
-      - test_cache_shim:
-          name: Testing Actions Cache Shim
-          filters: *filters
-      - test_cache_shim_durable_hit_save:
-          name: Testing Cache Shim Durable Hit (save)
-          filters: *filters
-      - test_cache_shim_durable_hit_restore:
-          name: Testing Cache Shim Durable Hit (restore)
-          # Must run strictly AFTER the save job -- this is the whole point:
-          # a separate job, separate machine, separate shim process, that
-          # can only produce a byte-identical file via a real round trip
-          # through CircleCI's runner API and S3.
-          requires:
-            - Testing Cache Shim Durable Hit (save)
-          filters: *filters
       - test_artifacts:
           name: Testing Artifacts (Act's built-in server)
           filters: *filters
-      - test_oidc_shim:
-          name: Testing OIDC Shim (real command, real mint, real auth gate)
+      - test_act_cache_server_durable_hit_save:
+          name: Testing Act Cache Server Durable Hit (save)
+          filters: *filters
+      - test_act_cache_server_durable_hit_restore:
+          name: Testing Act Cache Server Durable Hit (restore)
+          # Must run strictly AFTER the save job -- this is the whole point:
+          # a separate job, separate machine, separate Act cache-server
+          # process, that can only produce a byte-identical file via a real
+          # round trip through this orb's own restore_cache/save_cache
+          # around cache-server-path.
+          requires:
+            - Testing Act Cache Server Durable Hit (save)
           filters: *filters
       - test_run_act_booleans:
           name: Testing Boolean Parameter Encoding
@@ -1274,9 +844,6 @@ workflows:
           filters: *filters
       - test_collect_outputs_script:
           name: Testing collect-outputs.sh Directly
-          filters: *filters
-      - test_embedded_server_no_drift:
-          name: Testing Embedded Shim Servers (no drift)
           filters: *filters
       - test_is_true_no_drift:
           name: Testing is_true() Consolidation (no drift)
@@ -1300,18 +867,6 @@ workflows:
           filters: *filters
       - test_github_token_seam:
           name: Testing github-token Seam
-          filters: *filters
-      - test_gha_compile:
-          name: Testing GHA Workflow Compiler (compile)
-          filters: *filters
-      - test_gha_render_and_run:
-          name: Testing GHA Workflow Compiler (render + run)
-          filters: *filters
-      - test_gha_compile_matrix:
-          name: Testing GHA Workflow Compiler (matrix)
-          filters: *filters
-      - test_gha_compile_self_hosted:
-          name: Testing GHA Workflow Compiler (self-hosted runner)
           filters: *filters
       - act/act:
           name: Testing Overriding Executor
@@ -1347,22 +902,15 @@ workflows:
             - "Testing github-token Seam"
             - "Testing Overriding Executor"
             - "Testing Running Workflow File"
-            - "Testing Actions Cache Shim"
-            - "Testing Cache Shim Durable Hit (save)"
-            - "Testing Cache Shim Durable Hit (restore)"
             - "Testing Artifacts (Act's built-in server)"
-            - "Testing GHA Workflow Compiler (compile)"
-            - "Testing GHA Workflow Compiler (render + run)"
-            - "Testing GHA Workflow Compiler (matrix)"
-            - "Testing GHA Workflow Compiler (self-hosted runner)"
+            - "Testing Act Cache Server Durable Hit (save)"
+            - "Testing Act Cache Server Durable Hit (restore)"
             - "Testing Boolean Parameter Encoding"
             - "Testing run-act.sh additional-act-flags Directly"
             - "Testing create-workflow-file.sh Directly"
             - "Testing create-env-var-secret-files.sh Directly"
             - "Testing collect-outputs.sh Directly"
             - "Testing is_true() Consolidation (no drift)"
-            - "Testing OIDC Shim (real command, real mint, real auth gate)"
-            - "Testing Embedded Shim Servers (no drift)"
       - orb-tools/publish:
           name: "Publish Dev"
           orb_name: cci-labs/act
