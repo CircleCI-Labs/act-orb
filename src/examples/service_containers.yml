@@ -1,8 +1,8 @@
 description: |
   Pass a GitHub Actions `services:` block straight through to Act. Act emulates services itself
   via its own Docker networking, which inherits Act's own known service-emulation issues
-  (nektos/act#1022, nektos/act#2607) -- this is a verbatim passthrough, not a translation to a
-  native CircleCI secondary Docker image. See this orb's README ("What does not work") and
+  (nektos/act#1022, nektos/act#2607). This is a verbatim passthrough, not a translation to a
+  native CircleCI secondary Docker image. See docs/LIMITS.md ("What does not work") and
   docs/ROADMAP.md for why a native translation is a bigger, deferred design change.
 
 usage:

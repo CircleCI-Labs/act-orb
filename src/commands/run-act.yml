@@ -32,7 +32,7 @@ parameters:
       Enables the bind flag which binds working directory to container, rather than copy. NOTE:
       Act's own CLI default for --bind is false; this orb defaults to true so the checkout
       directory (and this command's own output-capture file, see `outputs`) is shared with the
-      container rather than copied. See the README's "Defaults that deviate from Act" section.
+      container rather than copied. See docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   verbose:
     type: boolean
     default: false
@@ -42,8 +42,7 @@ parameters:
     default: true
     description: >
       Automatically detects and uses the first event type in the workflow. NOTE: Act's own CLI
-      default for --detect-event is false; this orb defaults to true. See the README's "Defaults
-      that deviate from Act" section.
+      default for --detect-event is false; this orb defaults to true. See docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   directory:
     type: string
     default: .
@@ -55,7 +54,7 @@ parameters:
       Enable offline mode for actions (runs without fetching actions from remote sources). NOTE:
       Act's own CLI default for --action-offline-mode is false; this orb defaults to true since
       the actions cache (see `cache-actions`) is expected to already hold what was fetched on a
-      prior run. See the README's "Defaults that deviate from Act" section.
+      prior run. See docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   outputs:
     type: string
     default: ""
@@ -95,16 +94,16 @@ parameters:
     default: true
     description: >
       Forces pulling of Docker images even if already present. Matches Act's own CLI default
-      (`true`) when this command is used standalone -- unlike every other parameter here, this
+      (`true`) when this command is used standalone. Unlike every other parameter here, this
       one is deliberately left at Act's own default rather than one of this orb's own, because
-      `run-act` is itself a published, directly-callable command (see the README: "Use the
-      `act/act` command instead of the job if you need to run it inside your own
+      `run-act` is itself a published, directly-callable command (see the README's Quick Start:
+      "Use the `act/act` command instead of the job if you need to run it inside your own
       executor/job") and flipping its standalone default would silently change behavior for
       any existing caller who never sets `pull`. The `act`/`jobs/act` entry points explicitly
       pass `pull: false` by default instead (tuned for CircleCI's fresh-VM-per-job model, where
-      the image was likely just pulled/cached this run) -- see the README's "Defaults that
-      deviate from Act" section. That override is explicit at the `act`/`jobs/act` layer and
-      does not change this command's own default.
+      the image was likely just pulled/cached this run); see docs/ARCHITECTURE.md's "Defaults
+      that deviate from Act" section. That override is explicit at the `act`/`jobs/act` layer
+      and does not change this command's own default.
   rebuild:
     type: boolean
     default: true
@@ -112,7 +111,7 @@ parameters:
       Rebuilds local Docker images even if already present. Matches Act's own CLI default
       (`true`) when this command is used standalone, for the same reason as `pull` above. The
       `act`/`jobs/act` entry points explicitly pass `rebuild: false` by default instead -- see
-      the README's "Defaults that deviate from Act" section.
+      docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   remote-name:
     type: string
     default: origin
@@ -142,12 +141,12 @@ parameters:
       identical behavior to before this parameter existed, and `actions/upload-artifact`/
       `download-artifact` get no `ACTIONS_RUNTIME_URL`/`ACTIONS_RESULTS_URL` from Act, the same
       as today. Set it to enable Act's OWN artifact server (Act already implements the real
-      GitHub Actions artifact-v4 protocol -- see the README's "Artifacts" section -- this
+      GitHub Actions artifact-v4 protocol; see docs/CAPABILITIES.md's "Artifacts" section. This
       parameter only turns on a flag Act already has, no new server is built here) and then use
       a native `store_artifacts`/`persist_to_workspace` step afterwards pointed at this same
       path to actually get the uploaded files out of the ephemeral container. Does not help
       `container:`-scoped jobs, whose `upload-artifact@v4` fails outright for an unrelated
-      reason -- see the README.
+      reason; see docs/LIMITS.md.
   artifact-server-addr:
     type: string
     default: ""
@@ -178,7 +177,7 @@ parameters:
       default) or disables Act's server entirely by passing `--no-cache-server` (false). It does
       NOT control whether Act's cache server itself runs when this parameter is true -- that
       always happens by Act's own default; setting `cache-server-path` merely tells Act (and this
-      orb) where its storage lives so it can be cached. See the README's "Caching" section for the
+      orb) where its storage lives so it can be cached. See docs/CAPABILITIES.md's "Caching" section for the
       one documented tradeoff (one native cache key per job covers the whole directory) and for
       what happens with no cache server reachable at all (`actions/cache` warns and continues,
       verified behavior in `actions/toolkit`, not a failure).
@@ -199,7 +198,7 @@ parameters:
       expected to work on a real CircleCI container but was observed to pick the wrong interface
       (a VPN adapter) on at least one developer machine, requiring this to be set explicitly
       alongside `--network host` there. Only meaningful when `cache-server-enabled` is true --
-      see the README's "Caching" section for when to set this.
+      see docs/CAPABILITIES.md's "Caching" section for when to set this.
   cache-server-port:
     type: string
     default: ""

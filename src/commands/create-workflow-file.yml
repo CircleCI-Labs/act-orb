@@ -56,10 +56,10 @@ parameters:
       under a GitHub Actions job, e.g. a line like `postgres:` followed by further-indented
       `image:`/`env:`/`ports:` keys). Passed straight through to Act with no translation --
       Act emulates `services:` itself via its own Docker networking, inheriting Act's own
-      known service-emulation issues (nektos/act#1022, nektos/act#2607). See the README's
+      known service-emulation issues (nektos/act#1022, nektos/act#2607). See docs/LIMITS.md's
       "What does not work" section. Native translation to a CircleCI secondary Docker image
       would avoid Act's emulation entirely but is a job-level (not command-level) design
-      change -- see docs/ROADMAP.md.
+      change; see docs/ROADMAP.md.
   outputs:
     type: string
     default: ""

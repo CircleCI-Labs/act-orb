@@ -1,7 +1,7 @@
 description: |
   Run one borrowed GitHub Action as a single step, sandwiched between ordinary native
-  CircleCI steps in an otherwise fully native job -- the common case this orb (and its
-  ecosystem-bridge siblings) is scoped for: see the README's "Scope" section. `checkout:
+  CircleCI steps in an otherwise fully native job. This is the common case this orb (and its
+  ecosystem-bridge siblings) is scoped for; see docs/ARCHITECTURE.md's "Scope" section. `checkout:
   false` on the `act/act` command keeps this job's own earlier `checkout` as the single
   source of truth rather than checking out a second time; the borrowed action neither knows
   nor cares that the build step before it and the deploy step after it are plain shell, not

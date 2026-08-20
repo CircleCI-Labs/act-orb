@@ -1,6 +1,6 @@
 description: |
   Capture the wrapped GitHub Action's own outputs and surface them into $BASH_ENV so a later,
-  native CircleCI step in the same job can read them as plain shell variables -- verbatim by
+  native CircleCI step in the same job can read them as plain shell variables, verbatim by
   name, the same convention the sibling ecosystem-bridge orbs (Bitrise, Harness, Bitbucket
   Pipes, Buildkite) use for their own `collect-outputs`.
 

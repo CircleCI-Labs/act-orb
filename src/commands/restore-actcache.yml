@@ -3,7 +3,7 @@ description: >
   (`--cache-server-path`) so a workflow's `actions/cache@v4` calls (and any `setup-*` action with
   built-in caching) can get a real hit against data saved by a *previous job*, not just Act's own
   ephemeral, dies-with-the-container store. See `run-act`'s own `cache-server-*` parameter
-  descriptions and the README's "Caching" section for the one honest tradeoff this implies: one
+  descriptions and docs/CAPABILITIES.md's "Caching" section for the one honest tradeoff this implies: one
   native CircleCI cache key covers the whole directory, so any change that should invalidate a
   single `actions/cache` entry causes every entry under this path to be re-saved together.
 

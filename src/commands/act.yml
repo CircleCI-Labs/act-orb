@@ -54,7 +54,7 @@ parameters:
       same behavior as today. A seam only, for a future CircleCI-platform-minted,
       scoped, short-lived token to be injected under a different env var name with no
       interface change; see `create-env-var-secret-files`'s own parameter description
-      and the README's "Security notes" for the full rationale.
+      and docs/LIMITS.md's "Security notes" section for the full rationale.
   workflow-file:
     type: string
     default: /tmp/workflow.yml
@@ -110,8 +110,7 @@ parameters:
     default: ""
     description: >
       Verbatim YAML for the job's `services:` block, passed straight through to Act with no
-      translation (Act emulates it via its own Docker networking -- see the README's "What does
-      not work" section for known Act service-emulation issues this inherits). Ignored when
+      translation (Act emulates it via its own Docker networking ; see docs/LIMITS.md's "What does not work" section for known Act service-emulation issues this inherits). Ignored when
       `skip-create-workflow-file` is set.
   outputs:
     type: string
@@ -146,8 +145,7 @@ parameters:
     default: true
     description: >
       Enables the bind flag which binds working directory to container, rather than copy. NOTE:
-      Act's own CLI default for --bind is false; this orb defaults to true. See the README's
-      "Defaults that deviate from Act" section.
+      Act's own CLI default for --bind is false; this orb defaults to true. See docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   verbose:
     type: boolean
     default: false
@@ -157,8 +155,7 @@ parameters:
     default: true
     description: >
       Automatically detects and uses the first event type in the workflow. NOTE: Act's own CLI
-      default for --detect-event is false; this orb defaults to true. See the README's "Defaults
-      that deviate from Act" section.
+      default for --detect-event is false; this orb defaults to true. See docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   directory:
     type: string
     default: .
@@ -169,7 +166,7 @@ parameters:
     description: >
       Enable offline mode for actions (runs without fetching actions from remote sources). NOTE:
       Act's own CLI default for --action-offline-mode is false; this orb defaults to true. See
-      the README's "Defaults that deviate from Act" section.
+      docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   cache-actions:
     type: boolean
     default: true
@@ -191,15 +188,14 @@ parameters:
     default: false
     description: >
       Forces pulling of Docker images even if already present. NOTE: Act's own CLI default for
-      --pull is true; this orb defaults to false. See the README's "Defaults that deviate from
-      Act" section.
+      --pull is true; this orb defaults to false. See docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   rebuild:
     type: boolean
     default: false
     description: >
       Rebuilds local Docker images even if already present. NOTE: Act's own CLI default for
-      --rebuild is true; this orb defaults to false. See the README's "Defaults that deviate
-      from Act" section.
+      --rebuild is true; this orb defaults to false. See docs/ARCHITECTURE.md's "Defaults that
+      deviate from Act" section.
   remote-name:
     type: string
     default: origin
@@ -209,8 +205,7 @@ parameters:
     default: true
     description: >
       Prevents container removal after successful runs for maintaining state. NOTE: Act's own
-      CLI default for --reuse is false; this orb defaults to true. See the README's "Defaults
-      that deviate from Act" section.
+      CLI default for --reuse is false; this orb defaults to true. See docs/ARCHITECTURE.md's "Defaults that deviate from Act" section.
   input-file:
     type: string
     default: .input
@@ -225,7 +220,7 @@ parameters:
     description: >
       Directory Act's own built-in artifact server stores uploads to/serves downloads from.
       Empty (the default) is a no-op -- see `run-act`'s own parameter description and the
-      README's "Artifacts" section for the full explanation.
+      docs/CAPABILITIES.md's "Artifacts" section for the full explanation.
   artifact-server-addr:
     type: string
     default: ""
@@ -240,8 +235,7 @@ parameters:
     description: >
       Persist Act's own built-in GitHub Actions cache server storage across jobs via native
       restore_cache/save_cache (true, the default), or disable Act's cache server entirely with
-      --no-cache-server (false). See `run-act`'s own parameter description and the README's
-      "Caching" section.
+      --no-cache-server (false). See `run-act`'s own parameter description and docs/CAPABILITIES.md's "Caching" section.
   cache-server-path:
     type: string
     default: "~/.cache/actcache"
@@ -249,7 +243,7 @@ parameters:
   cache-server-addr:
     type: string
     default: ""
-    description: Address Act's own cache server advertises. Empty leaves Act's own auto-detection in place; see the README's "Caching" section.
+    description: Address Act's own cache server advertises. Empty leaves Act's own auto-detection in place; see docs/CAPABILITIES.md's "Caching" section.
   cache-server-port:
     type: string
     default: ""
